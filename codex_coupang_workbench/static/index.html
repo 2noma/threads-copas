@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Threads Coupang Publisher</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260704-threads-only" />
+    <link rel="stylesheet" href="static/styles.css?v=20260704-threads-only" />
   </head>
   <body>
     <div class="app-shell">
@@ -51,7 +51,7 @@
               </label>
               <label class="wide">
                 Redirect URI
-                <input name="threads_redirect_uri" autocomplete="off" placeholder="http://127.0.0.1:8765/api/threads/auth/callback" />
+                <input name="threads_redirect_uri" autocomplete="off" placeholder="https://sinabro-ai.com/threads-copas/api/threads/auth/callback" />
               </label>
               <div class="wide form-actions">
                 <button class="primary-button" type="submit">Save Settings</button>
@@ -76,6 +76,7 @@
               </label>
               <div class="wide form-actions">
                 <button class="primary-button" type="submit">Save Profile</button>
+                <button class="ghost-button" id="threads-import-button" type="button">Import Current Account</button>
                 <span id="threads-profile-message" class="inline-message"></span>
               </div>
             </form>
@@ -139,6 +140,6 @@
       </main>
     </div>
 
-    <script src="/static/app.js?v=20260704-threads-only"></script>
+    <script src="static/app.js?v=20260704-profile-import"></script>
   </body>
 </html>

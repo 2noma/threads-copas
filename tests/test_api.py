@@ -88,6 +88,43 @@ async def test_api_create_job_and_generate_draft(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.put(
+            "/api/settings",
+            json={
+                "threads_app_id": "app-id",
+                "threads_app_secret": "super-secret",
+                "threads_redirect_uri": "http://test/callback",
+                "coupang_secret_key": "coupang-secret",
+            },
+        )
+        assert first.status_code == 200
+        assert first.json()["threads_app_secret"] == ""
+        assert first.json()["coupang_secret_key"] == ""
+
+        second = await client.put(
+            "/api/settings",
+            json={
+                "threads_app_id": "app-id",
+                "threads_redirect_uri": "http://test/next-callback",
+            },
+        )
+        assert second.status_code == 200
+        assert second.json()["threads_app_secret"] == ""
+
+        settings = await client.get("/api/settings")
+        assert settings.json()["threads_app_secret"] == ""
+        assert settings.json()["coupang_secret_key"] == ""
+
+        import_start = await client.get("/api/threads/auth/import/start")
+        assert import_start.status_code == 200
+
+
+@pytest.mark.anyio
 async def test_api_create_job_can_infer_product_name_and_image_from_url(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
@@ -521,6 +558,42 @@ async def test_threads_profile_auth_callback_and_publish_flow(tmp_path, monkeypa
         assert records[0]["profile_key"] == "tesla"
         assert records[0]["display_name"] == "테슬라 용품"
         assert records[0]["threads_post_id"] == "post_123"
+
+
+@pytest.mark.anyio
+async def test_threads_profile_import_creates_profile_from_current_account(tmp_path, monkeypatch):
+    monkeypatch.setattr("codex_coupang_workbench.main.ThreadsApiClient", FakeThreadsClient)
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        settings = await client.put(
+            "/api/settings",
+            json={
+                "threads_app_id": "app-id",
+                "threads_app_secret": "secret",
+                "threads_redirect_uri": "http://test/api/threads/auth/callback",
+            },
+        )
+        assert settings.status_code == 200
+
+        auth_start = await client.get("/api/threads/auth/import/start")
+        assert auth_start.status_code == 200
+        auth_url = auth_start.json()["auth_url"]
+        assert "state=import-current-profile:" in auth_url
+        state = auth_url.split("state=", 1)[1]
+
+        callback = await client.get(
+            "/api/threads/auth/callback",
+            params={"code": "oauth-code", "state": state},
+        )
+        assert callback.status_code == 200
+
+        profiles = (await client.get("/api/threads/profiles")).json()
+        assert profiles[0]["profile_key"] == "tesla_daily"
+        assert profiles[0]["display_name"] == "Tesla Daily"
+        assert profiles[0]["username"] == "tesla_daily"
+        assert profiles[0]["is_connected"] is True
 
 
 @pytest.mark.anyio

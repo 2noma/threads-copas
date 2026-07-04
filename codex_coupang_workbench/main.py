@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -28,6 +29,24 @@ DEFAULT_DATA_DIR = PACKAGE_DIR.parent / "workbench_data"
 DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "workbench.sqlite3"
 STATIC_DIR = PACKAGE_DIR / "static"
 ICON_PATH = PACKAGE_DIR.parent / "assets" / "appicon.ico"
+THREADS_IMPORT_STATE_PREFIX = "import-current-profile:"
+SECRET_SETTING_KEYS = {"coupang_secret_key", "threads_app_secret"}
+
+
+def public_settings(settings: dict[str, str]) -> dict[str, str]:
+    visible = dict(settings)
+    for key in SECRET_SETTING_KEYS:
+        if key in visible:
+            visible[key] = ""
+    return visible
+
+
+def settings_to_store(payload: SettingsPayload, current_settings: dict[str, str]) -> dict[str, str]:
+    settings = payload.model_dump()
+    for key in SECRET_SETTING_KEYS:
+        if not settings.get(key) and current_settings.get(key):
+            settings[key] = current_settings[key]
+    return settings
 
 
 def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
@@ -74,14 +93,15 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
 
     @app.get("/api/settings")
     def get_settings(store: WorkbenchStore = Depends(get_store)) -> dict[str, str]:
-        return store.get_settings()
+        return public_settings(store.get_settings())
 
     @app.put("/api/settings")
     def set_settings(
         payload: SettingsPayload,
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, str]:
-        return store.set_settings(payload.model_dump())
+        settings = settings_to_store(payload, store.get_settings())
+        return public_settings(store.set_settings(settings))
 
     @app.get("/api/jobs")
     def list_jobs(store: WorkbenchStore = Depends(get_store)) -> list[dict[str, Any]]:
@@ -270,16 +290,25 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         client = get_threads_client(store.get_settings())
         return {"auth_url": client.build_authorization_url(profile_key.strip())}
 
+    @app.get("/api/threads/auth/import/start")
+    def start_threads_profile_import(
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, str]:
+        client = get_threads_client(store.get_settings())
+        state = f"{THREADS_IMPORT_STATE_PREFIX}{uuid4().hex}"
+        return {"auth_url": client.build_authorization_url(state)}
+
     @app.get("/api/threads/auth/callback", response_class=HTMLResponse)
     def threads_auth_callback(
         code: str,
         state: str,
         store: WorkbenchStore = Depends(get_store),
     ) -> str:
-        profile_key = state.strip()
-        if not profile_key:
+        callback_state = state.strip()
+        is_import = callback_state.startswith(THREADS_IMPORT_STATE_PREFIX)
+        if not callback_state:
             raise HTTPException(status_code=400, detail="Missing profile state")
-        if store.get_threads_profile(profile_key) is None:
+        if not is_import and store.get_threads_profile(callback_state) is None:
             raise HTTPException(status_code=404, detail="Threads profile not found")
         client = get_threads_client(store.get_settings())
         try:
@@ -290,6 +319,14 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Threads auth failed: {exc}") from None
         username = str(profile.get("username") or profile.get("name") or "")
         threads_user_id = str(profile.get("id") or short_token.get("user_id") or "")
+        profile_key = callback_state
+        if is_import:
+            profile_key = username.strip() or threads_user_id.strip()
+            display_name = str(profile.get("name") or username or profile_key)
+            store.upsert_threads_profile(
+                profile_key=profile_key,
+                display_name=display_name,
+            )
         store.save_threads_profile_token(
             profile_key=profile_key,
             threads_user_id=threads_user_id,

@@ -5,9 +5,11 @@ const state = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const APP_BASE_PATH = window.location.pathname.startsWith("/threads-copas") ? "/threads-copas" : "";
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const url = path.startsWith("/") ? `${APP_BASE_PATH}${path}` : path;
+  const response = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
@@ -62,20 +64,66 @@ async function saveProfile(event) {
   const message = $("#threads-profile-message");
   const payload = formToObject(event.currentTarget);
   payload.notes = "";
-  message.textContent = "saving...";
-  await api("/api/threads/profiles", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-  event.currentTarget.reset();
-  await refreshProfiles();
-  message.textContent = "saved";
-  clearMessage(message);
+  try {
+    message.textContent = "saving...";
+    await api("/api/threads/profiles", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    event.currentTarget.reset();
+    await refreshProfiles();
+    message.textContent = "saved";
+    clearMessage(message);
+  } catch (error) {
+    console.error(error);
+    message.textContent = "프로필 저장에 실패했습니다.";
+  }
 }
 
 async function connectProfile(profileKey) {
-  const response = await api(`/api/threads/auth/start?profile_key=${encodeURIComponent(profileKey)}`);
-  window.open(response.auth_url, "_blank", "noopener,noreferrer");
+  const authWindow = window.open("about:blank", "_blank");
+  if (authWindow) {
+    authWindow.opener = null;
+  }
+  try {
+    const response = await api(`/api/threads/auth/start?profile_key=${encodeURIComponent(profileKey)}`);
+    if (authWindow) {
+      authWindow.location.href = response.auth_url;
+      waitForProfileConnection(profileKey, authWindow);
+    } else {
+      window.location.href = response.auth_url;
+    }
+  } catch (error) {
+    console.error(error);
+    if (authWindow) {
+      authWindow.close();
+    }
+    $("#threads-profile-message").textContent = "Threads 연결을 시작하지 못했습니다.";
+  }
+}
+
+async function importCurrentProfile() {
+  const authWindow = window.open("about:blank", "_blank");
+  if (authWindow) {
+    authWindow.opener = null;
+  }
+  const message = $("#threads-profile-message");
+  try {
+    message.textContent = "Threads 인증을 여는 중...";
+    const response = await api("/api/threads/auth/import/start");
+    if (authWindow) {
+      authWindow.location.href = response.auth_url;
+      waitForProfilesChange(authWindow);
+    } else {
+      window.location.href = response.auth_url;
+    }
+  } catch (error) {
+    console.error(error);
+    if (authWindow) {
+      authWindow.close();
+    }
+    message.textContent = "Threads 계정을 가져오지 못했습니다.";
+  }
 }
 
 async function refreshProfileToken(profileKey) {
@@ -158,7 +206,7 @@ function renderProfiles() {
   $("#threads-profile-count").textContent = `${state.profiles.length} profiles`;
   const list = $("#threads-profiles-list");
   if (state.profiles.length === 0) {
-    list.innerHTML = '<div class="empty-cell">No Threads profiles yet.</div>';
+    list.innerHTML = '<div class="empty-cell">프로필 키와 표시 이름을 저장한 뒤 Connect를 눌러 Threads 계정을 연결하세요.</div>';
   } else {
     list.innerHTML = state.profiles
       .map((profile) => {
@@ -262,6 +310,7 @@ function escapeAttribute(value) {
 function bindEvents() {
   $("#settings-form").addEventListener("submit", saveSettings);
   $("#threads-profile-form").addEventListener("submit", saveProfile);
+  $("#threads-import-button").addEventListener("click", importCurrentProfile);
   $("#threads-draft-form").addEventListener("submit", generateDraft);
   $("#threads-publish-button").addEventListener("click", publishDraft);
   $("#refresh-button").addEventListener("click", refreshAll);
@@ -275,6 +324,56 @@ function bindEvents() {
       await refreshProfileToken(button.dataset.key);
     }
   });
+  window.addEventListener("focus", () => {
+    refreshAll().catch((error) => console.error(error));
+  });
+}
+
+function waitForProfileConnection(profileKey, authWindow) {
+  let attempts = 0;
+  const timer = setInterval(async () => {
+    attempts += 1;
+    if (attempts > 60 || authWindow.closed) {
+      clearInterval(timer);
+    }
+    try {
+      await refreshProfiles();
+      const profile = state.profiles.find((item) => item.profile_key === profileKey);
+      if (profile?.is_connected) {
+        clearInterval(timer);
+        $("#threads-profile-message").textContent = "Threads 연결 완료";
+        clearMessage($("#threads-profile-message"));
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }, 2000);
+}
+
+function waitForProfilesChange(authWindow) {
+  const initialConnections = new Map(
+    state.profiles.map((profile) => [profile.profile_key, profile.is_connected])
+  );
+  let attempts = 0;
+  const timer = setInterval(async () => {
+    attempts += 1;
+    if (attempts > 60 || authWindow.closed) {
+      clearInterval(timer);
+    }
+    try {
+      await refreshProfiles();
+      const imported = state.profiles.find(
+        (profile) => profile.is_connected && initialConnections.get(profile.profile_key) !== true
+      );
+      if (imported) {
+        clearInterval(timer);
+        $("#threads-profile-message").textContent = `${imported.display_name} 가져오기 완료`;
+        clearMessage($("#threads-profile-message"));
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }, 2000);
 }
 
 async function init() {
