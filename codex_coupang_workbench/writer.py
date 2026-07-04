@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+
+
+DISCLOSURE = "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다."
+
+
+@dataclass(frozen=True)
+class DraftPost:
+    title: str
+    body: str
+    sections: list[str]
+    tags: list[str]
+
+
+@dataclass(frozen=True)
+class CampaignPackage:
+    title: str
+    sns_draft: str
+    image_brief: str
+    blog_final: str
+    sns_final: str
+    tags: list[str]
+
+
+def generate_draft(
+    product_name: str,
+    product_url: str,
+    memo: str = "",
+    persona: str = "",
+    image_url: str = "",
+) -> DraftPost:
+    clean_name = product_name.strip() or "추천 상품"
+    clean_url = product_url.strip()
+    clean_memo = memo.strip() or "상품 특징을 확인하고 구매 전 체크할 포인트를 정리했습니다."
+    clean_image_url = image_url.strip()
+    subject_marker = _subject_marker(clean_name)
+
+    title = f"{clean_name} 구매 전 체크할 점과 추천 포인트"
+    sections = [
+        "첫인상",
+        "구매 전 확인하면 좋은 점",
+        "이런 분에게 잘 맞습니다",
+        "정리",
+    ]
+    tags = _build_tags(clean_name)
+    parts = [
+        DISCLOSURE,
+        title,
+    ]
+    if clean_image_url:
+        parts.append(f"![{clean_name}]({clean_image_url})")
+    parts.extend(
+        [
+            "첫인상",
+            f"{clean_memo}",
+            f"{clean_name}{subject_marker} 가격, 배송 조건, 최근 리뷰 흐름을 함께 보고 판단하는 것이 좋습니다.",
+            "구매 전 체크 포인트",
+            "• 현재 판매가와 쿠폰 적용 여부",
+            "• 배송 방식과 도착 예정일",
+            "• 최근 리뷰에서 반복해서 언급되는 장점과 불편점",
+            "• 옵션, 색상, 구성품 차이",
+            "이런 분에게 잘 맞습니다",
+            "구매 전에 핵심 장단점을 빠르게 확인하고 싶은 분, 용도에 맞는 옵션을 비교해 보고 싶은 분에게 잘 맞습니다.",
+            "정리",
+            f"{clean_name}{subject_marker} 구매 목적이 분명할 때 만족도가 높아지는 제품입니다. 최신 가격과 옵션은 아래 링크에서 한 번 더 확인해 보세요.",
+            f"{clean_url}",
+        ]
+    )
+    body = "\n\n".join(parts)
+    return DraftPost(title=title, body=body, sections=sections, tags=tags)
+
+
+def generate_campaign(
+    product_name: str,
+    product_url: str,
+    memo: str = "",
+    reference_image_url: str = "",
+    persona: str = "",
+    product_facts: list[str] | None = None,
+    product_page_title: str = "",
+    product_description: str = "",
+) -> CampaignPackage:
+    clean_name = product_page_title.strip() or product_name.strip() or "추천 상품"
+    clean_url = product_url.strip()
+    clean_memo = memo.strip()
+    clean_description = product_description.strip()
+    clean_reference = reference_image_url.strip()
+    subject_marker = _subject_marker(clean_name)
+    tags = _build_tags(clean_name)
+    persona_hint = persona.strip() or "실사용 관점의 블로그 에디터"
+    title = f"{clean_name} 광고 캠페인"
+    facts = _normalize_facts(product_facts or [])
+    if clean_memo:
+        facts.extend(_normalize_facts([clean_memo]))
+    if clean_description and not facts:
+        facts.extend(_normalize_facts([clean_description]))
+    facts = _dedupe(facts)
+    public_facts = _public_content_facts(facts)
+    has_product_details = bool(public_facts)
+    fact_line = (
+        ", ".join(public_facts[:5])
+        if has_product_details
+        else "상품 상세를 자동으로 충분히 읽지 못했습니다. 강조 포인트를 입력하면 그 내용으로 다시 정리합니다."
+    )
+    fact_bullets = (
+        "\n".join(f"• {fact}" for fact in public_facts[:6])
+        if has_product_details
+        else "• 상품 상세를 자동으로 충분히 읽지 못했습니다.\n• 상품명과 링크만으로 확인 가능한 범위가 제한적입니다."
+    )
+    primary_fact = public_facts[0] if has_product_details else "상품 상세를 자동으로 충분히 읽지 못했습니다"
+
+    sns_draft = "\n".join(
+        [
+            f"{clean_name}",
+            (
+                f"{primary_fact} 중심으로 보는 상품입니다."
+                if has_product_details
+                else f"{primary_fact}. 상품 내용 / 강조 포인트를 입력하면 더 정확한 SNS 글로 다시 정리합니다."
+            ),
+            fact_bullets,
+            "상세 옵션과 구성은 링크에서 확인하세요." if has_product_details else "상품 내용 / 강조 포인트를 보강하면 더 정확하게 정리됩니다.",
+            f"{clean_url}",
+            "#쿠팡추천 #쿠팡파트너스",
+        ]
+    )
+
+    reference_line = (
+        f"참고 이미지 URL: {clean_reference}. 제품 형태와 주요 색감은 이 이미지를 우선 참고한다."
+        if clean_reference
+        else "참고 이미지가 없으므로 제품명과 확보된 상품 정보를 바탕으로 자연스러운 실사 광고 컷을 구성한다."
+    )
+    image_brief = "\n".join(
+        [
+            "imagegen 실사 광고 이미지 브리프",
+            f"상품: {clean_name}",
+            f"상품에서 반드시 보여줄 요소: {fact_line}",
+            reference_line,
+            "방향: 제품이 첫눈에 보이는 프리미엄 커머셜 사진. 상품의 실제 용도와 핵심 사양이 시각적으로 느껴지는 사용 장면 또는 제품 단독 컷.",
+            "구도: 제품을 화면 중심에 크게 배치하고 주변 소품은 상품의 용도만 암시할 정도로 절제한다.",
+            "피해야 할 요소: 정보 나열 그래픽, 표, 긴 문구, 말풍선, 튜토리얼 화면, 과장된 효과, 브랜드가 아닌 임의 로고.",
+            "결과물: 블로그와 SNS 광고에 바로 사용할 수 있는 사실적인 제품 광고 이미지.",
+        ]
+    )
+
+    blog_final_parts = [
+        DISCLOSURE,
+            f"{clean_name} 핵심 포인트 정리",
+        (
+            _intro_sentence(clean_name, public_facts, persona_hint)
+            if has_product_details
+            else f"{clean_name}{subject_marker} 현재 자동 수집된 상세 정보가 부족합니다. 아래 링크에서 옵션과 구성품을 확인한 뒤 강조 포인트를 보강하는 것이 좋습니다."
+        ),
+        "상품 내용",
+        fact_bullets,
+        "활용 장면",
+        _usage_sentence(clean_name, public_facts),
+        (
+            f"{clean_name}{subject_marker} 위 요소가 필요한 분에게 우선 비교해볼 만한 상품입니다. 상세 옵션과 구성은 아래 링크에서 확인하세요."
+            if has_product_details
+            else f"{clean_name}{subject_marker} 상품 상세를 자동으로 충분히 읽지 못했습니다. 정확한 광고 글을 위해 상품 상세의 핵심 사양이나 강조 포인트를 입력해 주세요."
+        ),
+        clean_url,
+    ]
+    blog_final = "\n\n".join(blog_final_parts)
+
+    sns_final = "\n".join(
+        [
+            DISCLOSURE,
+            f"{clean_name}",
+            f"{fact_line}",
+            "필요한 사양과 사용 장면이 맞는지 링크에서 확인하세요.",
+            clean_url,
+            "#쿠팡파트너스 #쿠팡추천",
+        ]
+    )
+
+    return CampaignPackage(
+        title=title,
+        sns_draft=sns_draft,
+        image_brief=image_brief,
+        blog_final=blog_final,
+        sns_final=sns_final,
+        tags=tags,
+    )
+
+
+def generate_threads_post(
+    product_name: str,
+    product_url: str,
+    product_facts: list[str] | None = None,
+    memo: str = "",
+    persona: str = "",
+) -> str:
+    clean_name = product_name.strip() or "추천 상품"
+    clean_url = product_url.strip()
+    facts = _normalize_facts(product_facts or [])
+    if memo.strip():
+        facts.extend(_normalize_facts([memo]))
+    public_facts = _public_content_facts(_dedupe(facts))
+    first_fact = public_facts[0] if public_facts else "구매 전 옵션과 구성을 확인해볼 만한 상품"
+    detail_lines = public_facts[:3]
+    if not detail_lines:
+        detail_lines = ["상품 상세를 확인한 뒤 필요한 구성인지 비교해보세요."]
+    category_tags = _threads_tags(clean_name)
+
+    return "\n\n".join(
+        [
+            DISCLOSURE,
+            f"{clean_name}",
+            f"{first_fact} 중심으로 살펴보기 좋은 제품입니다.",
+            "\n".join(f"- {fact}" for fact in detail_lines),
+            "구매 전에는 호환 여부, 구성, 사이즈를 한 번 더 확인해보세요.",
+            clean_url,
+            " ".join(category_tags),
+        ]
+    )
+
+
+def _build_tags(product_name: str) -> list[str]:
+    tokens = [part for part in product_name.replace("/", " ").split() if part]
+    tags = [product_name]
+    tags.extend(tokens[:4])
+    tags.extend(["쿠팡추천", "쿠팡파트너스"])
+    deduped: list[str] = []
+    for tag in tags:
+        if tag not in deduped:
+            deduped.append(tag)
+    return deduped
+
+
+def _threads_tags(product_name: str) -> list[str]:
+    tags = ["#쿠팡파트너스"]
+    name = product_name.lower()
+    if "테슬라" in product_name or "tesla" in name:
+        tags.extend(["#테슬라용품", "#차량용품"])
+    elif any(term in product_name for term in ("강아지", "반려", "펫", "하네스", "물티슈")):
+        tags.extend(["#반려동물용품", "#펫템"])
+    elif any(term in product_name for term in ("우산", "레인", "부츠", "생활")):
+        tags.extend(["#생활템", "#장마템"])
+    else:
+        tags.extend(["#생활템", "#쿠팡추천"])
+    return tags[:4]
+
+
+def _normalize_facts(facts: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for fact in facts:
+        for part in re.split(r"ㆍ|(?<!\d)/(?!\d)|(?<!\d),(?!\d)", fact):
+            cleaned = part.strip(" -•\n\t")
+            if cleaned and not _is_low_value_fact(cleaned) and cleaned not in normalized:
+                normalized.append(cleaned)
+    return normalized
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for item in items:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _public_content_facts(facts: list[str]) -> list[str]:
+    public_facts: list[str] = []
+    for fact in facts:
+        cleaned = _clean_source_phrasing(fact)
+        if not cleaned or _is_commerce_fact(cleaned) or _mentions_price(cleaned):
+            continue
+        if cleaned not in public_facts:
+            public_facts.append(cleaned)
+    return public_facts
+
+
+def _usage_sentence(product_name: str, facts: list[str]) -> str:
+    marker = _subject_marker(product_name)
+    product_specs = [fact for fact in facts if not _is_commerce_fact(fact)]
+    selected = product_specs[:3] or facts[:3]
+    joined = ", ".join(selected)
+    if joined:
+        if "마우스" in product_name:
+            return f"{product_name}{marker} 문서 작업, 콘텐츠 편집, 긴 페이지 탐색처럼 스크롤과 버튼 조작이 잦은 환경에서 {joined} 같은 장점을 확인해볼 만합니다."
+        return f"{product_name}{marker} {joined} 같은 특징을 실제 사용 장면에서 확인하고 선택하는 것이 좋습니다."
+    return f"{product_name}{marker} 상품 상세를 자동으로 충분히 읽지 못했습니다. 정확한 활용 장면을 쓰려면 핵심 사양이나 사용 목적을 보강해야 합니다."
+
+
+def _intro_sentence(product_name: str, facts: list[str], persona_hint: str) -> str:
+    marker = _subject_marker(product_name)
+    product_specs = [fact for fact in facts if not _is_commerce_fact(fact)]
+    if "마우스" in product_name and product_specs:
+        return f"{product_name}{marker} 정밀한 포인터 조작, 빠른 스크롤, 업무 흐름 커스터마이징을 중시하는 사용자에게 맞는 프리미엄 무선 마우스입니다."
+    first_fact = product_specs[0] if product_specs else facts[0]
+    return f"{product_name}{marker} {persona_hint} 기준으로 {first_fact}{_object_marker(first_fact)} 먼저 확인해볼 만한 상품입니다."
+
+
+def _is_commerce_fact(fact: str) -> bool:
+    commerce_terms = (
+        "판매가",
+        "정상가",
+        "할인가",
+        "가격",
+        "쿠폰",
+        "할인",
+        "별점",
+        "리뷰",
+        "구매",
+        "도착",
+        "배송",
+        "설치일",
+        "설치 가능",
+        "적립",
+        "쿠팡캐시",
+    )
+    return any(term in fact for term in commerce_terms)
+
+
+def _mentions_price(fact: str) -> bool:
+    return bool(re.search(r"\d[\d,]*\s*원", fact))
+
+
+def _clean_source_phrasing(fact: str) -> str:
+    cleaned = fact.strip()
+    cleaned = re.sub(r"^(쿠팡\s*)?상품\s*페이지\s*기준\s*", "", cleaned)
+    cleaned = re.sub(r"^쿠팡\s*(확인\s*)?기준\s*", "", cleaned)
+    cleaned = cleaned.replace("쿠팡 상품", "상품")
+    return cleaned.strip(" -•\n\t")
+
+
+def _is_low_value_fact(fact: str) -> bool:
+    cleaned = fact.strip(" .!?\n\t")
+    lowered = cleaned.lower()
+    if not cleaned:
+        return True
+    if lowered in {"com", "www", "apple", "coupang"}:
+        return True
+    return any(
+        phrase in lowered
+        for phrase in (
+            "com에서 구입",
+            ".com에서 구입",
+            "에서 구입하세요",
+            "구입하세요",
+            "구매하기",
+            "확인하세요",
+            "지금 쿠팡에서",
+            "다양한 bar형 제품들을 확인",
+        )
+    )
+
+
+def _object_marker(text: str) -> str:
+    last = _last_korean_syllable(text)
+    if last is None:
+        return "을"
+    return "을" if (ord(last) - 0xAC00) % 28 else "를"
+
+
+def _subject_marker(text: str) -> str:
+    last = _last_korean_syllable(text)
+    if last is None:
+        return "은"
+    return "은" if (ord(last) - 0xAC00) % 28 else "는"
+
+
+def _last_korean_syllable(text: str) -> str | None:
+    for char in reversed(text.strip()):
+        if 0xAC00 <= ord(char) <= 0xD7A3:
+            return char
+    return None

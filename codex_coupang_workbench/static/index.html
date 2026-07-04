@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Threads Coupang Publisher</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260704-threads-only" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-title">Threads Publisher</div>
+          <div class="brand-subtitle">Coupang Partners</div>
+        </div>
+        <nav class="nav">
+          <a href="#publish">Publish</a>
+          <a href="#profiles">Profiles</a>
+          <a href="#settings">Settings</a>
+          <a href="#records">Records</a>
+        </nav>
+        <div class="status-box">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="health-text">checking</span>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>쿠팡 링크로 Threads 발행</h1>
+            <p>쿠팡 URL만 입력하고, 프로필을 고른 뒤 글을 확인하고 발행합니다.</p>
+          </div>
+          <button class="ghost-button" id="refresh-button" type="button">Refresh</button>
+        </header>
+
+        <section class="section-grid">
+          <section class="panel" id="settings">
+            <div class="panel-header">
+              <h2>Threads Settings</h2>
+              <span>local only</span>
+            </div>
+            <form id="settings-form" class="form-grid">
+              <label>
+                Threads App ID
+                <input name="threads_app_id" autocomplete="off" placeholder="Meta Threads App ID" />
+              </label>
+              <label>
+                Threads App Secret
+                <input name="threads_app_secret" autocomplete="off" placeholder="Meta Threads App Secret" />
+              </label>
+              <label class="wide">
+                Redirect URI
+                <input name="threads_redirect_uri" autocomplete="off" placeholder="http://127.0.0.1:8765/api/threads/auth/callback" />
+              </label>
+              <div class="wide form-actions">
+                <button class="primary-button" type="submit">Save Settings</button>
+                <span id="settings-message" class="inline-message"></span>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel" id="profiles">
+            <div class="panel-header">
+              <h2>Profiles</h2>
+              <span id="threads-profile-count">0 profiles</span>
+            </div>
+            <form id="threads-profile-form" class="form-grid">
+              <label>
+                프로필 키
+                <input name="profile_key" required placeholder="tesla" />
+              </label>
+              <label>
+                표시 이름
+                <input name="display_name" required placeholder="테슬라 용품" />
+              </label>
+              <div class="wide form-actions">
+                <button class="primary-button" type="submit">Save Profile</button>
+                <span id="threads-profile-message" class="inline-message"></span>
+              </div>
+            </form>
+            <div id="threads-profiles-list" class="profile-list"></div>
+          </section>
+        </section>
+
+        <section class="panel" id="publish">
+          <div class="panel-header">
+            <h2>Draft & Publish</h2>
+            <span id="selected-product-label">no product</span>
+          </div>
+          <form id="threads-draft-form" class="form-grid">
+            <label>
+              발행 프로필
+              <select name="profile_key" id="threads-profile-select"></select>
+            </label>
+            <label>
+              쿠팡 URL
+              <input name="product_url" required placeholder="https://link.coupang.com/a/..." />
+            </label>
+            <div class="wide form-actions">
+              <button class="primary-button" type="submit">Generate Thread</button>
+              <span id="threads-draft-message" class="inline-message"></span>
+            </div>
+          </form>
+
+          <label class="thread-preview-label">
+            Threads 미리보기
+            <textarea id="threads-preview" rows="12" placeholder="글을 생성하면 여기에서 확인하고 수정할 수 있습니다."></textarea>
+          </label>
+          <div class="form-actions publish-actions">
+            <button class="primary-button" id="threads-publish-button" type="button">Publish to Threads</button>
+            <span id="threads-publish-message" class="inline-message"></span>
+          </div>
+        </section>
+
+        <section class="panel" id="records">
+          <div class="panel-header">
+            <h2>Publish Records</h2>
+            <span id="record-count">0 records</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>발행 시각</th>
+                  <th>상품</th>
+                  <th>발행 프로필</th>
+                  <th>Threads Post ID</th>
+                </tr>
+              </thead>
+              <tbody id="records-body">
+                <tr>
+                  <td colspan="4" class="empty-cell">No publish records yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js?v=20260704-threads-only"></script>
+  </body>
+</html>
