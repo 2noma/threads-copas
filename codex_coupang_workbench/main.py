@@ -8,7 +8,12 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from .coupang_partners import CoupangPartnerProduct, CoupangPartnersError, fetch_partner_product_context
+from .coupang_partners import (
+    CoupangPartnerProduct,
+    CoupangPartnersError,
+    extract_coupang_ids,
+    fetch_partner_product_context,
+)
 from .codex_threads import CodexThreadsError, DEFAULT_CODEX_MODEL, generate_codex_threads_post
 from .naver import publish_handoff_message
 from .product_research import fetch_best_product_context
@@ -58,7 +63,7 @@ def settings_to_store(payload: SettingsPayload, current_settings: dict[str, str]
     return settings
 
 
-def resolve_coupang_partner_product(
+def fetch_coupang_partner_product(
     product_url: str,
     settings: dict[str, str],
 ) -> tuple[CoupangPartnerProduct, str]:
@@ -72,6 +77,14 @@ def resolve_coupang_partner_product(
         secret_key=secret_key,
         sub_id=settings.get("coupang_sub_id", ""),
     )
+    return partner_product, resolved_url
+
+
+def resolve_coupang_partner_product(
+    product_url: str,
+    settings: dict[str, str],
+) -> tuple[CoupangPartnerProduct, str]:
+    partner_product, resolved_url = fetch_coupang_partner_product(product_url, settings)
     if not partner_product.product_name:
         raise CoupangPartnersError("쿠팡 파트너스 API에서 상품 정보를 찾지 못했습니다.")
     return partner_product, resolved_url
@@ -83,15 +96,19 @@ def product_preview_response(
     original_url: str,
     resolved_url: str,
 ) -> dict[str, Any]:
+    product_ids = extract_coupang_ids(resolved_url) + extract_coupang_ids(original_url)
+    product_id = product.product_id or (product_ids[0] if product_ids else "")
     return {
         "product_name": product.product_name,
-        "product_id": product.product_id,
+        "product_id": product_id,
+        "item_id": product_ids[1] if len(product_ids) > 1 else "",
         "image_url": product.image_url,
         "partner_url": product.partner_url,
         "product_url": product.product_url,
         "resolved_url": resolved_url,
         "original_url": original_url,
         "facts": list(product.facts),
+        "needs_product_name": not bool(product.product_name),
     }
 
 
@@ -160,9 +177,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     ) -> dict[str, Any]:
         product_url = payload.product_url.strip()
         try:
-            product, resolved_url = resolve_coupang_partner_product(product_url, store.get_settings())
+            product, resolved_url = fetch_coupang_partner_product(product_url, store.get_settings())
         except CoupangPartnersError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+        if not product.product_name and not product.partner_url:
+            raise HTTPException(status_code=400, detail="쿠팡 파트너스 API에서 상품 정보를 찾지 못했습니다.") from None
         return product_preview_response(
             product,
             original_url=product_url,
@@ -421,7 +440,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         api_error = ""
         if settings.get("coupang_access_key", "").strip() and settings.get("coupang_secret_key", "").strip():
             try:
-                partner_product, resolved_url = resolve_coupang_partner_product(product_url, settings)
+                partner_product, resolved_url = fetch_coupang_partner_product(product_url, settings)
                 product_context = partner_product.to_product_context(
                     source_url=product_url,
                     resolved_url=resolved_url or product_url,

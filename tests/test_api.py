@@ -270,6 +270,85 @@ async def test_coupang_product_preview_returns_partner_product(tmp_path, monkeyp
         assert payload["partner_url"] == "https://link.coupang.com/a/preview"
         assert payload["resolved_url"] == "https://www.coupang.com/vp/products/777"
         assert "디지털 카테고리 상품" in payload["facts"]
+        assert payload["needs_product_name"] is False
+
+
+@pytest.mark.anyio
+async def test_coupang_product_preview_allows_deeplink_when_name_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "codex_coupang_workbench.main.fetch_partner_product_context",
+        lambda *args, **kwargs: (
+            CoupangPartnerProduct(
+                partner_url="https://link.coupang.com/a/partial",
+            ),
+            "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
+        ),
+    )
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/settings",
+            json={
+                "coupang_access_key": "access",
+                "coupang_secret_key": "secret",
+            },
+        )
+        response = await client.post(
+            "/api/coupang/product-preview",
+            json={"product_url": "https://www.coupang.com/vp/products/9579586125?itemId=28594687231"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["product_name"] == ""
+        assert payload["product_id"] == "9579586125"
+        assert payload["item_id"] == "28594687231"
+        assert payload["partner_url"] == "https://link.coupang.com/a/partial"
+        assert payload["needs_product_name"] is True
+
+
+@pytest.mark.anyio
+async def test_threads_draft_uses_manual_name_with_partial_coupang_deeplink(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "codex_coupang_workbench.main.fetch_partner_product_context",
+        lambda *args, **kwargs: (
+            CoupangPartnerProduct(
+                partner_url="https://link.coupang.com/a/partial",
+            ),
+            "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
+        ),
+    )
+    monkeypatch.setattr(
+        "codex_coupang_workbench.main.generate_codex_threads_post",
+        lambda **kwargs: (_ for _ in ()).throw(CodexThreadsError("skip codex")),
+    )
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/settings",
+            json={
+                "coupang_access_key": "access",
+                "coupang_secret_key": "secret",
+            },
+        )
+        response = await client.post(
+            "/api/threads/draft",
+            json={
+                "product_url": "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
+                "product_name": "테슬라 모델Y 센터 콘솔 수납함",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["job"]["product_name"] == "테슬라 모델Y 센터 콘솔 수납함"
+        assert payload["job"]["product_url"] == "https://link.coupang.com/a/partial"
+        assert "테슬라 모델Y 센터 콘솔 수납함" in payload["text"]
+        assert "https://link.coupang.com/a/partial" in payload["comment_text"]
 
 
 @pytest.mark.anyio

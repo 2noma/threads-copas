@@ -142,8 +142,12 @@ async function previewCoupangProduct() {
     state.productPreview = preview;
     renderProductPreview();
     $("#selected-product-label").textContent = preview.product_name || "selected product";
-    message.textContent = "상품 확인 완료";
-    clearMessage(message);
+    if (preview.needs_product_name) {
+      message.textContent = "상품명만 직접 입력하면 생성할 수 있습니다.";
+    } else {
+      message.textContent = "상품 확인 완료";
+      clearMessage(message);
+    }
   } catch (error) {
     console.error(error);
     message.textContent = error.message || "상품을 확인하지 못했습니다.";
@@ -155,12 +159,18 @@ async function previewCoupangProduct() {
 async function generateDraft(event) {
   event.preventDefault();
   const message = $("#threads-draft-message");
+  const form = event.currentTarget;
+  if (!$("#product-name-fallback").hidden && !form.elements.product_name.value.trim()) {
+    message.textContent = "상품명을 입력하세요.";
+    form.elements.product_name.focus();
+    return;
+  }
   setBusy(true);
   try {
     message.textContent = "generating...";
     const draft = await api("/api/threads/draft", {
       method: "POST",
-      body: JSON.stringify(formToObject(event.currentTarget)),
+      body: JSON.stringify(formToObject(form)),
     });
     state.draftJobId = draft.job.id;
     $("#threads-preview").value = draft.text;
@@ -232,12 +242,18 @@ async function refreshAll() {
 function renderProductPreview() {
   const container = $("#coupang-product-preview");
   const preview = state.productPreview;
+  const fallback = $("#product-name-fallback");
   if (!preview) {
     container.hidden = true;
     container.innerHTML = "";
+    fallback.hidden = true;
     return;
   }
   const facts = Array.isArray(preview.facts) ? preview.facts.filter(Boolean) : [];
+  fallback.hidden = !preview.needs_product_name;
+  if (!preview.needs_product_name) {
+    $("#threads-draft-form").elements.product_name.value = "";
+  }
   container.hidden = false;
   container.innerHTML = `
     <div class="product-preview-thumb">
@@ -248,10 +264,16 @@ function renderProductPreview() {
       }
     </div>
     <div class="product-preview-info">
-      <strong>${escapeHtml(preview.product_name || "상품명 없음")}</strong>
+      <strong>${escapeHtml(preview.product_name || "상품명 자동 확인 필요")}</strong>
       ${preview.product_id ? `<span class="link-text">상품 ID: ${escapeHtml(preview.product_id)}</span>` : ""}
+      ${preview.item_id ? `<span class="link-text">Item ID: ${escapeHtml(preview.item_id)}</span>` : ""}
       ${facts.length ? `<span class="link-text">${facts.map(escapeHtml).join(" · ")}</span>` : ""}
       ${preview.partner_url ? `<span class="link-text">${escapeHtml(preview.partner_url)}</span>` : ""}
+      ${
+        preview.needs_product_name
+          ? '<span class="link-text">쿠팡 API가 상품명을 정확히 반환하지 않아 상품명만 직접 확인합니다.</span>'
+          : ""
+      }
     </div>
   `;
 }
@@ -369,6 +391,8 @@ function bindEvents() {
     state.productPreview = null;
     state.draftJobId = "";
     $("#selected-product-label").textContent = "no product";
+    $("#product-name-fallback").hidden = true;
+    $("#threads-draft-form").elements.product_name.value = "";
     renderProductPreview();
   });
   $("#threads-draft-form").addEventListener("submit", generateDraft);
