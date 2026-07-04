@@ -1,4 +1,9 @@
-from codex_coupang_workbench.writer import generate_campaign, generate_draft, generate_threads_post
+from codex_coupang_workbench.writer import (
+    generate_campaign,
+    generate_draft,
+    generate_threads_comment,
+    generate_threads_post,
+)
 
 
 def test_generate_draft_contains_coupang_disclosure_and_product_url():
@@ -245,11 +250,38 @@ def test_generate_threads_post_builds_short_disclosure_safe_copy():
         ],
     )
 
-    assert text.startswith("이 포스팅은 쿠팡 파트너스 활동의 일환으로")
+    assert "쿠팡 파트너스" not in text
     assert "테슬라 파노라마 선루프 썬쉐이드 차광 커버" in text
     assert "파노라마 선루프용 차광 커버" in text
     assert "모델Y 호환" in text
-    assert "https://link.coupang.com/a/example" in text
-    assert "#쿠팡파트너스" in text
+    assert "https://link.coupang.com/a/example" not in text
+    assert "#쿠팡파트너스" not in text
     assert "29,900원" not in text
     assert "내일 도착" not in text
+
+    comment = generate_threads_comment("https://link.coupang.com/a/example")
+    assert comment.startswith("이 포스팅은 쿠팡 파트너스 활동의 일환으로")
+    assert "https://link.coupang.com/a/example" in comment
+
+
+def test_generate_threads_post_matches_conversational_threads_style():
+    text = generate_threads_post(
+        product_name="펫케어 휴대용 물티슈, 20개입, 20개",
+        product_url="https://link.coupang.com/a/e5C2vNFPae",
+        product_facts=[
+            "20매입 소포장",
+            "20팩 구성",
+            "산책 후 발과 털 정리에 사용",
+            "피톤치드향",
+        ],
+    )
+
+    assert "중심으로 살펴보기 좋은 제품입니다" not in text
+    assert "까지 확인해볼 만합니다" not in text
+    assert "\n- " not in text
+    assert "산책" in text
+    assert "소포장" in text
+    assert "구매 전에는" in text
+    assert "확인해보세요" in text
+    assert text.count("\n\n") >= 4
+    assert text.splitlines()[-1].startswith("#")

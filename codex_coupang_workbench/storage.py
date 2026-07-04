@@ -104,6 +104,7 @@ class WorkbenchStore:
             self._ensure_column(conn, "jobs", "generated_image_url", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_profile_key", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_post_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "jobs", "threads_reply_id", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_published_at", "TEXT NOT NULL DEFAULT ''")
 
     def _ensure_column(
@@ -364,6 +365,7 @@ class WorkbenchStore:
         self,
         job_id: str,
         text: str,
+        comment_text: str = "",
         title: str = "",
         tags: list[str] | None = None,
         image_url: str | None = None,
@@ -382,7 +384,14 @@ class WorkbenchStore:
                         updated_at = ?
                     WHERE id = ?
                     """,
-                    (title.strip(), text, text, json.dumps(tags or [], ensure_ascii=False), now, job_id),
+                    (
+                        title.strip(),
+                        text,
+                        comment_text.strip() or text,
+                        json.dumps(tags or [], ensure_ascii=False),
+                        now,
+                        job_id,
+                    ),
                 )
             else:
                 conn.execute(
@@ -400,7 +409,7 @@ class WorkbenchStore:
                     (
                         title.strip(),
                         text,
-                        text,
+                        comment_text.strip() or text,
                         image_url.strip(),
                         json.dumps(tags or [], ensure_ascii=False),
                         now,
@@ -588,6 +597,7 @@ class WorkbenchStore:
                     jobs.product_url,
                     jobs.threads_profile_key AS profile_key,
                     jobs.threads_post_id,
+                    jobs.threads_reply_id,
                     jobs.threads_published_at,
                     jobs.sns_final AS published_text,
                     threads_profiles.display_name,
@@ -665,6 +675,7 @@ class WorkbenchStore:
         job_id: str,
         profile_key: str,
         threads_post_id: str,
+        threads_reply_id: str = "",
         published_text: str = "",
     ) -> dict[str, Any]:
         now = utc_now()
@@ -675,12 +686,22 @@ class WorkbenchStore:
                 SET status = 'THREADS_PUBLISHED',
                     threads_profile_key = ?,
                     threads_post_id = ?,
+                    threads_reply_id = ?,
                     threads_published_at = ?,
                     sns_final = CASE WHEN ? != '' THEN ? WHEN sns_final = '' THEN sns_draft ELSE sns_final END,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (profile_key.strip(), threads_post_id.strip(), now, published_text.strip(), published_text.strip(), now, job_id),
+                (
+                    profile_key.strip(),
+                    threads_post_id.strip(),
+                    threads_reply_id.strip(),
+                    now,
+                    published_text.strip(),
+                    published_text.strip(),
+                    now,
+                    job_id,
+                ),
             )
         self.add_log(job_id, "INFO", f"Threads published via {profile_key.strip()}")
         job = self.get_job(job_id)

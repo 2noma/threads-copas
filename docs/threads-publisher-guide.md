@@ -12,7 +12,7 @@ Threads 설정 저장
 → 프로필 연결
 → 쿠팡 URL 입력
 → 글 생성
-→ 글 확인/수정
+→ 본문과 댓글 확인/수정
 → 발행 버튼 클릭
 → 발행 기록 저장
 ```
@@ -25,6 +25,7 @@ Threads 설정 저장
 4. Threads App Secret
 5. Redirect URI
 6. 발행할 Threads 프로필
+7. Codex CLI 로그인
 
 로컬에서 사용할 Redirect URI는 아래 값입니다.
 
@@ -55,8 +56,11 @@ http://127.0.0.1:8765
 - `Threads App ID`: Meta 앱 ID
 - `Threads App Secret`: Meta 앱 시크릿
 - `Redirect URI`: `http://127.0.0.1:8765/api/threads/auth/callback`
+- `Codex Model`: 기본값은 `gpt-5.5`
 
 입력 후 `Save Settings`를 누릅니다.
+
+Threads 글 생성은 별도 OpenAI API Key를 저장하지 않고 현재 머신에 로그인된 Codex CLI 인증을 사용합니다. Codex 로그인이 필요하면 터미널에서 `codex login`을 먼저 실행합니다.
 
 ## 2. Profiles 추가
 
@@ -94,19 +98,21 @@ http://127.0.0.1:8765
 2. 쿠팡 URL을 붙여넣습니다.
 3. `Generate Thread`를 누릅니다.
 
-상품명과 상품 정보는 URL에서 가능한 범위로 자동 확인합니다. 생성되는 글에는 쿠팡 파트너스 고지 문구가 포함됩니다.
+상품명과 상품 정보는 URL에서 가능한 범위로 자동 확인합니다. 본문은 사람들이 상품을 궁금해하도록 짧게 작성하고, 댓글에는 쿠팡 파트너스 고지 문구와 링크가 들어갑니다.
+
+`Generate Thread`는 Codex CLI를 비대화형으로 호출해 글을 생성합니다. Codex CLI가 없거나 로그인/호출에 실패하면 로컬 템플릿 생성으로 자동 전환됩니다.
 
 ## 5. 발행 전 확인
 
-생성된 글은 `Threads 미리보기`에 표시됩니다.
+생성된 글은 `Threads 본문 미리보기`에 표시됩니다.
 
-여기에서 문구를 직접 수정할 수 있습니다. 실제 발행에는 이 미리보기 칸에 남아 있는 최종 문구가 사용됩니다.
+댓글은 `댓글 미리보기`에 표시됩니다. 실제 발행에는 두 미리보기 칸에 남아 있는 최종 문구가 사용됩니다.
 
 ## 6. 발행
 
 글을 확인한 뒤 `Publish to Threads`를 누릅니다.
 
-이때 실제 Threads API로 게시됩니다. 발행이 성공하면 발행 기록이 저장됩니다.
+이때 실제 Threads API로 본문을 먼저 게시하고, 이어서 같은 게시물에 댓글을 답니다. 발행이 성공하면 발행 기록이 저장됩니다.
 
 ## 7. 발행 기록 확인
 
@@ -120,7 +126,7 @@ http://127.0.0.1:8765
 - 발행 프로필
 - Threads username
 - Threads post ID
-- 실제 발행 문구
+- 실제 발행 본문과 댓글 문구
 
 발행 기록 API:
 
@@ -137,7 +143,7 @@ Threads 토큰은 만료될 수 있으므로 주기적으로 갱신해야 합니
 ## 주의사항
 
 - 발행은 자동으로 실행되지 않습니다. 반드시 `Publish to Threads` 버튼을 눌러야 합니다.
-- 쿠팡 파트너스 고지 문구는 생성 글에 포함됩니다.
+- 쿠팡 파트너스 고지 문구와 링크는 본문이 아니라 댓글에 포함됩니다.
 - 가격, 배송일, 리뷰 수처럼 자주 바뀌는 정보는 글에서 제외하도록 생성됩니다.
 - App Secret과 Access Token은 로컬 SQLite DB에 저장됩니다.
 - `workbench_data/workbench.sqlite3` 파일을 외부에 공유하지 마세요.
@@ -172,4 +178,3 @@ workbench_data/server.log
 
 - `Refresh`를 누릅니다.
 - `/api/threads/publish-records`가 정상 응답하는지 확인합니다.
-

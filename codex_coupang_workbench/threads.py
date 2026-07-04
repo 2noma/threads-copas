@@ -92,14 +92,44 @@ class ThreadsApiClient:
         )
 
     def publish_text(self, threads_user_id: str, access_token: str, text: str) -> dict[str, Any]:
+        return self._publish_text_container(
+            threads_user_id=threads_user_id,
+            access_token=access_token,
+            text=text,
+        )
+
+    def publish_reply(
+        self,
+        threads_user_id: str,
+        access_token: str,
+        text: str,
+        reply_to_id: str,
+    ) -> dict[str, Any]:
+        return self._publish_text_container(
+            threads_user_id=threads_user_id,
+            access_token=access_token,
+            text=text,
+            reply_to_id=reply_to_id,
+        )
+
+    def _publish_text_container(
+        self,
+        threads_user_id: str,
+        access_token: str,
+        text: str,
+        reply_to_id: str = "",
+    ) -> dict[str, Any]:
+        data = {
+            "media_type": "TEXT",
+            "text": text,
+            "access_token": access_token,
+        }
+        if reply_to_id.strip():
+            data["reply_to_id"] = reply_to_id.strip()
         container = self._transport(
             "POST",
             f"{self.api_base_url}/{threads_user_id}/threads",
-            data={
-                "media_type": "TEXT",
-                "text": text,
-                "access_token": access_token,
-            },
+            data=data,
         )
         creation_id = str(container.get("id", "")).strip()
         if not creation_id:

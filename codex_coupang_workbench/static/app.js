@@ -143,6 +143,7 @@ async function generateDraft(event) {
     });
     state.draftJobId = draft.job.id;
     $("#threads-preview").value = draft.text;
+    $("#threads-comment-preview").value = draft.comment_text || "";
     $("#selected-product-label").textContent = draft.job.product_name || "selected product";
     message.textContent = "draft ready";
   } finally {
@@ -155,6 +156,7 @@ async function publishDraft() {
   const message = $("#threads-publish-message");
   const profileKey = $("#threads-profile-select").value;
   const text = $("#threads-preview").value.trim();
+  const commentText = $("#threads-comment-preview").value.trim();
   if (!profileKey) {
     message.textContent = "프로필을 선택하세요.";
     return;
@@ -176,11 +178,13 @@ async function publishDraft() {
         profile_key: profileKey,
         job_id: state.draftJobId,
         text,
+        comment_text: commentText,
       }),
     });
     message.textContent = `published: ${published.threads_post_id}`;
     state.draftJobId = "";
     $("#threads-preview").value = "";
+    $("#threads-comment-preview").value = "";
     $("#selected-product-label").textContent = "no product";
     await refreshRecords();
   } finally {

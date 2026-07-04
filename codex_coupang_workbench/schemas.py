@@ -9,6 +9,7 @@ class SettingsPayload(BaseModel):
     writer_persona: str = ""
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
+    codex_model: str = ""
     threads_app_id: str = ""
     threads_app_secret: str = ""
     threads_redirect_uri: str = ""
@@ -62,3 +63,4 @@ class ThreadsPublishPayload(BaseModel):
     profile_key: str = Field(min_length=1)
     job_id: str = Field(min_length=1)
     text: str = Field(min_length=1)
+    comment_text: str = ""

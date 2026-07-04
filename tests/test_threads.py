@@ -68,3 +68,26 @@ def test_exchange_refresh_profile_and_publish_text_request_shapes():
     assert transport.calls[-2]["data"]["media_type"] == "TEXT"
     assert transport.calls[-2]["data"]["text"] == "테스트 글"
     assert transport.calls[-1]["data"]["creation_id"] == "container_123"
+
+
+def test_publish_reply_sets_reply_to_id_on_container_request():
+    transport = FakeTransport()
+    client = ThreadsApiClient(
+        app_id="app-id",
+        app_secret="secret",
+        redirect_uri="https://example.com/callback",
+        transport=transport,
+    )
+
+    published = client.publish_reply(
+        threads_user_id="12345",
+        access_token="long-token",
+        text="댓글 글",
+        reply_to_id="post_123",
+    )
+
+    assert published["id"] == "post_123"
+    assert transport.calls[-2]["data"]["media_type"] == "TEXT"
+    assert transport.calls[-2]["data"]["text"] == "댓글 글"
+    assert transport.calls[-2]["data"]["reply_to_id"] == "post_123"
+    assert transport.calls[-1]["data"]["creation_id"] == "container_123"

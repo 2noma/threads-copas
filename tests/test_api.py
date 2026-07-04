@@ -1,12 +1,14 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from codex_coupang_workbench.codex_threads import CodexThreadsError
 from codex_coupang_workbench.main import create_app
 from codex_coupang_workbench.product_research import ProductContext
 
 
 class FakeThreadsClient:
     published = []
+    replies = []
 
     def __init__(self, app_id, app_secret, redirect_uri):
         self.app_id = app_id
@@ -41,6 +43,17 @@ class FakeThreadsClient:
             }
         )
         return {"id": "post_123"}
+
+    def publish_reply(self, threads_user_id, access_token, text, reply_to_id):
+        self.replies.append(
+            {
+                "threads_user_id": threads_user_id,
+                "access_token": access_token,
+                "text": text,
+                "reply_to_id": reply_to_id,
+            }
+        )
+        return {"id": "reply_123"}
 
 
 @pytest.mark.anyio
@@ -100,11 +113,13 @@ async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
                 "threads_app_secret": "super-secret",
                 "threads_redirect_uri": "http://test/callback",
                 "coupang_secret_key": "coupang-secret",
+                "codex_model": "gpt-5.5",
             },
         )
         assert first.status_code == 200
         assert first.json()["threads_app_secret"] == ""
         assert first.json()["coupang_secret_key"] == ""
+        assert first.json()["codex_model"] == "gpt-5.5"
 
         second = await client.put(
             "/api/settings",
@@ -119,9 +134,56 @@ async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
         settings = await client.get("/api/settings")
         assert settings.json()["threads_app_secret"] == ""
         assert settings.json()["coupang_secret_key"] == ""
+        assert settings.json()["codex_model"] == "gpt-5.5"
 
         import_start = await client.get("/api/threads/auth/import/start")
         assert import_start.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_threads_draft_prefers_codex_auth_generation(tmp_path, monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        "codex_coupang_workbench.main.fetch_best_product_context",
+        lambda url, product_name: ProductContext(
+            source_url=url,
+            resolved_url="https://www.coupang.com/vp/products/example",
+            page_title="테슬라 센터 콘솔 수납함",
+            facts=["모델Y 주니퍼 호환", "센터 콘솔 수납 트레이"],
+        ),
+    )
+
+    def fake_generate_codex_threads_post(**kwargs):
+        calls.append(kwargs)
+        return "왜 테슬라 콘솔 정리는 차를 타고 나서야 신경 쓰이기 시작할까요?\n\n작은 물건이 자꾸 굴러다닌다면 한 번 볼 만한 수납함입니다.\n\n#테슬라용품"
+
+    monkeypatch.setattr("codex_coupang_workbench.main.generate_codex_threads_post", fake_generate_codex_threads_post)
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/settings",
+            json={
+                "codex_model": "gpt-5.5",
+            },
+        )
+
+        draft = await client.post(
+            "/api/threads/draft",
+            json={"profile_key": "tesla", "product_url": "https://link.coupang.com/a/example"},
+        )
+
+        assert draft.status_code == 200
+        assert draft.json()["text"].startswith("왜 테슬라 콘솔 정리는")
+        assert "쿠팡 파트너스" not in draft.json()["text"]
+        assert "https://link.coupang.com/a/example" not in draft.json()["text"]
+        assert "쿠팡 파트너스" in draft.json()["comment_text"]
+        assert "https://link.coupang.com/a/example" in draft.json()["comment_text"]
+        assert calls[0]["model"] == "gpt-5.5"
+        assert calls[0]["product_name"] == "테슬라 센터 콘솔 수납함"
+        assert "모델Y 주니퍼 호환" in calls[0]["product_facts"]
 
 
 @pytest.mark.anyio
@@ -481,7 +543,12 @@ async def test_api_campaign_reuses_known_campaign_when_same_url_later_blocks_con
 @pytest.mark.anyio
 async def test_threads_profile_auth_callback_and_publish_flow(tmp_path, monkeypatch):
     FakeThreadsClient.published = []
+    FakeThreadsClient.replies = []
     monkeypatch.setattr("codex_coupang_workbench.main.ThreadsApiClient", FakeThreadsClient)
+    monkeypatch.setattr(
+        "codex_coupang_workbench.main.generate_codex_threads_post",
+        lambda **kwargs: (_ for _ in ()).throw(CodexThreadsError("skip codex in publish flow test")),
+    )
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
         lambda url, product_name: ProductContext(
@@ -535,7 +602,8 @@ async def test_threads_profile_auth_callback_and_publish_flow(tmp_path, monkeypa
         )
         assert draft.status_code == 200
         draft_payload = draft.json()
-        assert "쿠팡 파트너스" in draft_payload["text"]
+        assert "쿠팡 파트너스" not in draft_payload["text"]
+        assert "쿠팡 파트너스" in draft_payload["comment_text"]
         assert "파노라마 선루프용 차광 커버" in draft_payload["text"]
         assert "29,900원" not in draft_payload["text"]
 
@@ -545,12 +613,16 @@ async def test_threads_profile_auth_callback_and_publish_flow(tmp_path, monkeypa
                 "profile_key": "tesla",
                 "job_id": draft_payload["job"]["id"],
                 "text": draft_payload["text"],
+                "comment_text": draft_payload["comment_text"],
             },
         )
         assert publish.status_code == 200
         assert publish.json()["threads_post_id"] == "post_123"
+        assert publish.json()["threads_reply_id"] == "reply_123"
         assert FakeThreadsClient.published[0]["threads_user_id"] == "12345"
         assert FakeThreadsClient.published[0]["access_token"] == "long-token"
+        assert FakeThreadsClient.replies[0]["reply_to_id"] == "post_123"
+        assert "쿠팡 파트너스" in FakeThreadsClient.replies[0]["text"]
 
         records = (await client.get("/api/threads/publish-records")).json()
         assert records[0]["product_name"] == "테슬라 파노라마 선루프 썬쉐이드 차광 커버"

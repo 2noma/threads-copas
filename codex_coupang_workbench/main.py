@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from .codex_threads import CodexThreadsError, DEFAULT_CODEX_MODEL, generate_codex_threads_post
 from .naver import publish_handoff_message
 from .product_research import fetch_best_product_context
 from .schemas import (
@@ -22,7 +23,7 @@ from .schemas import (
 )
 from .storage import WorkbenchStore
 from .threads import ThreadsApiClient, ThreadsApiError
-from .writer import generate_campaign, generate_draft, generate_threads_post
+from .writer import generate_campaign, generate_draft, generate_threads_comment, generate_threads_post
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = PACKAGE_DIR.parent / "workbench_data"
@@ -30,7 +31,7 @@ DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "workbench.sqlite3"
 STATIC_DIR = PACKAGE_DIR / "static"
 ICON_PATH = PACKAGE_DIR.parent / "assets" / "appicon.ico"
 THREADS_IMPORT_STATE_PREFIX = "import-current-profile:"
-SECRET_SETTING_KEYS = {"coupang_secret_key", "threads_app_secret"}
+SECRET_SETTING_KEYS = {"coupang_secret_key", "threads_app_secret", "openai_api_key"}
 
 
 def public_settings(settings: dict[str, str]) -> dict[str, str]:
@@ -43,6 +44,9 @@ def public_settings(settings: dict[str, str]) -> dict[str, str]:
 
 def settings_to_store(payload: SettingsPayload, current_settings: dict[str, str]) -> dict[str, str]:
     settings = payload.model_dump()
+    for key in settings:
+        if key not in payload.model_fields_set and current_settings.get(key):
+            settings[key] = current_settings[key]
     for key in SECRET_SETTING_KEYS:
         if not settings.get(key) and current_settings.get(key):
             settings[key] = current_settings[key]
@@ -353,6 +357,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         product_name = payload.product_name.strip()
         image_url = payload.image_url.strip()
         product_context = fetch_best_product_context(payload.product_url, product_name)
+        settings = store.get_settings()
         if not product_name:
             known_context = store.get_known_product_context(payload.product_url)
             product_name = known_context.get("product_name", "") or product_context.page_title
@@ -369,16 +374,29 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             product_url=job["product_url"],
             product_facts=product_context.facts or [],
             memo=payload.memo,
-            persona=store.get_settings().get("writer_persona", ""),
+            persona=settings.get("writer_persona", ""),
         )
+        comment_text = generate_threads_comment(job["product_url"])
+        try:
+            threads_text = generate_codex_threads_post(
+                model=settings.get("codex_model", "").strip() or DEFAULT_CODEX_MODEL,
+                product_name=job["product_name"],
+                product_url=job["product_url"],
+                product_facts=product_context.facts or [],
+                memo=payload.memo,
+                persona=settings.get("writer_persona", ""),
+            )
+        except CodexThreadsError:
+            pass
         updated_job = store.update_job_threads_draft(
             job["id"],
             text=threads_text,
+            comment_text=comment_text,
             title=f"{job['product_name']} Threads",
             tags=["쿠팡파트너스", "Threads"],
             image_url=image_url or None,
         )
-        return {"job": updated_job, "text": threads_text}
+        return {"job": updated_job, "text": threads_text, "comment_text": comment_text}
 
     @app.post("/api/threads/publish")
     def publish_threads_post(
@@ -404,15 +422,30 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         post_id = str(published.get("id", "")).strip()
         if not post_id:
             raise HTTPException(status_code=400, detail="Threads publish response did not include an id")
+        comment_text = payload.comment_text.strip()
+        reply_id = ""
+        if comment_text:
+            try:
+                reply = client.publish_reply(
+                    threads_user_id=profile["threads_user_id"],
+                    access_token=profile["access_token"],
+                    text=comment_text,
+                    reply_to_id=post_id,
+                )
+            except ThreadsApiError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            reply_id = str(reply.get("id", "")).strip()
         updated_job = store.mark_threads_published(
             job_id=payload.job_id,
             profile_key=payload.profile_key,
             threads_post_id=post_id,
-            published_text=payload.text,
+            threads_reply_id=reply_id,
+            published_text=f"본문:\n{payload.text.strip()}\n\n댓글:\n{comment_text}" if comment_text else payload.text,
         )
         return {
             "status": "THREADS_PUBLISHED",
             "threads_post_id": post_id,
+            "threads_reply_id": reply_id,
             "job": updated_job,
         }
 

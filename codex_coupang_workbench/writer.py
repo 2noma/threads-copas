@@ -200,23 +200,24 @@ def generate_threads_post(
     if memo.strip():
         facts.extend(_normalize_facts([memo]))
     public_facts = _public_content_facts(_dedupe(facts))
-    first_fact = public_facts[0] if public_facts else "구매 전 옵션과 구성을 확인해볼 만한 상품"
-    detail_lines = public_facts[:3]
-    if not detail_lines:
-        detail_lines = ["상품 상세를 확인한 뒤 필요한 구성인지 비교해보세요."]
+    detail_line = _threads_detail_sentence(clean_name, public_facts)
     category_tags = _threads_tags(clean_name)
 
     return "\n\n".join(
         [
-            DISCLOSURE,
-            f"{clean_name}",
-            f"{first_fact} 중심으로 살펴보기 좋은 제품입니다.",
-            "\n".join(f"- {fact}" for fact in detail_lines),
-            "구매 전에는 호환 여부, 구성, 사이즈를 한 번 더 확인해보세요.",
-            clean_url,
-            " ".join(category_tags),
+            _threads_hook_sentence(clean_name),
+            clean_name,
+            detail_line,
+            _threads_usage_sentence(clean_name, public_facts),
+            _threads_check_sentence(clean_name),
+            " ".join(tag for tag in category_tags if tag != "#쿠팡파트너스"),
         ]
     )
+
+
+def generate_threads_comment(product_url: str) -> str:
+    clean_url = product_url.strip()
+    return f"{DISCLOSURE}\n\n{clean_url}" if clean_url else DISCLOSURE
 
 
 def _build_tags(product_name: str) -> list[str]:
@@ -243,6 +244,84 @@ def _threads_tags(product_name: str) -> list[str]:
     else:
         tags.extend(["#생활템", "#쿠팡추천"])
     return tags[:4]
+
+
+def _threads_hook_sentence(product_name: str) -> str:
+    lowered = product_name.lower()
+    if any(term in product_name for term in ("강아지", "반려", "펫", "하네스", "물티슈")):
+        return "산책이나 외출이 잦으면 작게 챙겨두는 용품이 은근히 편하더라고요."
+    if "테슬라" in product_name or "tesla" in lowered:
+        return "차 안에서 매일 거슬리는 부분은 작은 용품 하나로 체감이 꽤 달라집니다."
+    if any(term in product_name for term in ("우산", "레인", "부츠", "장우산")):
+        return "비 오는 날엔 꺼내기 쉽고 바로 쓰기 편한지가 제일 먼저 보이더라고요."
+    return "자주 쓰는 생활템은 거창한 기능보다 실제로 손이 자주 가는지가 중요하죠."
+
+
+def _threads_detail_sentence(product_name: str, facts: list[str]) -> str:
+    selected = facts[:3]
+    if not selected:
+        return f"{product_name}{_topic_marker(product_name)} 상세 페이지에서 구성과 옵션을 확인해보고 고르면 좋습니다."
+    if any(term in product_name for term in ("강아지", "반려", "펫", "물티슈")):
+        portable = _find_fact(selected, ("소포장", "휴대", "20매", "20매입")) or selected[0]
+        quantity = _find_fact(selected, ("구성", "팩", "개입", "20팩"))
+        cleanup = _clean_usage_fact(_find_fact(facts, ("산책", "발", "털", "닦")))
+        if quantity and cleanup:
+            return f"{cleanup}할 때 쓰기 좋고, {portable}에 {quantity}이라 외출용으로 나눠 챙기기 편합니다."
+        if cleanup:
+            return f"{cleanup}할 때 쓰기 좋고, {portable}이라 외출용으로 챙기기 편합니다."
+        return f"{portable}이라 산책 가방이나 외출 파우치에 넣어두기 좋습니다."
+    if "테슬라" in product_name or "tesla" in product_name.lower():
+        primary = selected[0]
+        secondary = selected[1] if len(selected) > 1 else ""
+        if secondary:
+            return f"{primary} 제품이라 {secondary} 여부를 먼저 보고 고르면 좋습니다."
+        return f"{primary} 용도로 필요한 분들이 먼저 비교해볼 만합니다."
+    if any(term in product_name for term in ("우산", "레인", "부츠", "장우산")):
+        return f"{selected[0]}처럼 비 오는 날 바로 쓰는 요소를 기준으로 보면 좋습니다."
+    if len(selected) == 1:
+        return f"{product_name}{_topic_marker(product_name)} {selected[0]} 부분을 먼저 볼 만합니다."
+    if len(selected) == 2:
+        return f"{product_name}{_topic_marker(product_name)} {selected[0]}, {selected[1]} 구성이 눈에 들어옵니다."
+    return f"{product_name}{_topic_marker(product_name)} {selected[0]}, {selected[1]}, {selected[2]} 같은 부분을 보고 고르면 좋습니다."
+
+
+def _threads_usage_sentence(product_name: str, facts: list[str]) -> str:
+    joined = ", ".join(facts[:2])
+    if any(term in product_name for term in ("강아지", "반려", "펫", "물티슈")):
+        return "산책 후 발이나 털을 닦을 때, 외출 가방에 나눠 넣어두기 좋은 쪽으로 보면 됩니다."
+    if "하네스" in product_name:
+        return "산책할 때 착용감과 사이즈가 맞는지 먼저 보고 고르면 좋습니다."
+    if "테슬라" in product_name:
+        return "차량 모델 호환 여부와 실제 장착 위치를 먼저 맞춰보고 고르면 실패를 줄일 수 있습니다."
+    if any(term in product_name for term in ("우산", "레인", "부츠", "장우산")):
+        return "출근길이나 장마철 외출처럼 바로 써야 하는 상황에 맞춰 보면 좋습니다."
+    if joined:
+        return f"평소 사용 장면에서 {joined} 같은 부분이 필요한지 기준으로 보면 좋습니다."
+    return "평소 쓰는 장면에 맞는지 먼저 생각해보고 고르면 좋습니다."
+
+
+def _threads_check_sentence(product_name: str) -> str:
+    if "테슬라" in product_name:
+        return "구매 전에는 호환 모델, 장착 위치, 구성품을 꼭 확인해보세요."
+    if any(term in product_name for term in ("강아지", "하네스")):
+        return "구매 전에는 사이즈, 착용 방식, 반려견 체형에 맞는지 확인해보세요."
+    if any(term in product_name for term in ("우산", "레인", "부츠", "장우산")):
+        return "구매 전에는 사이즈, 소재, 휴대 방식을 확인해보세요."
+    return "구매 전에는 구성, 사이즈, 사용 목적에 맞는지 확인해보세요."
+
+
+def _find_fact(facts: list[str], terms: tuple[str, ...]) -> str:
+    for fact in facts:
+        if any(term in fact for term in terms):
+            return fact
+    return ""
+
+
+def _clean_usage_fact(fact: str) -> str:
+    cleaned = fact.strip()
+    cleaned = cleaned.replace("에 사용", "")
+    cleaned = cleaned.replace("으로 사용", "")
+    return cleaned
 
 
 def _normalize_facts(facts: list[str]) -> list[str]:
@@ -362,6 +441,10 @@ def _subject_marker(text: str) -> str:
     if last is None:
         return "은"
     return "은" if (ord(last) - 0xAC00) % 28 else "는"
+
+
+def _topic_marker(text: str) -> str:
+    return _subject_marker(text)
 
 
 def _last_korean_syllable(text: str) -> str | None:

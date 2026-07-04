@@ -53,6 +53,10 @@
                 Redirect URI
                 <input name="threads_redirect_uri" autocomplete="off" placeholder="https://sinabro-ai.com/threads-copas/api/threads/auth/callback" />
               </label>
+              <label>
+                Codex Model
+                <input name="codex_model" autocomplete="off" placeholder="gpt-5.5" />
+              </label>
               <div class="wide form-actions">
                 <button class="primary-button" type="submit">Save Settings</button>
                 <span id="settings-message" class="inline-message"></span>
@@ -105,8 +109,12 @@
           </form>
 
           <label class="thread-preview-label">
-            Threads 미리보기
-            <textarea id="threads-preview" rows="12" placeholder="글을 생성하면 여기에서 확인하고 수정할 수 있습니다."></textarea>
+            Threads 본문 미리보기
+            <textarea id="threads-preview" rows="10" placeholder="글을 생성하면 본문을 확인하고 수정할 수 있습니다."></textarea>
+          </label>
+          <label class="thread-preview-label">
+            댓글 미리보기
+            <textarea id="threads-comment-preview" rows="5" placeholder="쿠팡 파트너스 고지와 링크가 댓글로 들어갑니다."></textarea>
           </label>
           <div class="form-actions publish-actions">
             <button class="primary-button" id="threads-publish-button" type="button">Publish to Threads</button>
