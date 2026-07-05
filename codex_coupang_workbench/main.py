@@ -531,7 +531,8 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         payload: ThreadsPublishPayload,
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, Any]:
-        if store.get_job(payload.job_id) is None:
+        job = store.get_job(payload.job_id)
+        if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
         profile = store.get_threads_profile(payload.profile_key, include_token=True)
         if profile is None:
@@ -539,12 +540,21 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         if not profile.get("is_connected"):
             raise HTTPException(status_code=400, detail="Threads profile is not connected")
         client = get_threads_client(store.get_settings())
+        image_url = str(job.get("image_url") or "").strip()
         try:
-            published = client.publish_text(
-                threads_user_id=profile["threads_user_id"],
-                access_token=profile["access_token"],
-                text=payload.text,
-            )
+            if image_url:
+                published = client.publish_image(
+                    threads_user_id=profile["threads_user_id"],
+                    access_token=profile["access_token"],
+                    text=payload.text,
+                    image_url=image_url,
+                )
+            else:
+                published = client.publish_text(
+                    threads_user_id=profile["threads_user_id"],
+                    access_token=profile["access_token"],
+                    text=payload.text,
+                )
         except ThreadsApiError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         post_id = str(published.get("id", "")).strip()

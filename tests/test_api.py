@@ -40,7 +40,20 @@ class FakeThreadsClient:
             {
                 "threads_user_id": threads_user_id,
                 "access_token": access_token,
+                "media_type": "TEXT",
                 "text": text,
+            }
+        )
+        return {"id": "post_123"}
+
+    def publish_image(self, threads_user_id, access_token, text, image_url):
+        self.published.append(
+            {
+                "threads_user_id": threads_user_id,
+                "access_token": access_token,
+                "media_type": "IMAGE",
+                "text": text,
+                "image_url": image_url,
             }
         )
         return {"id": "post_123"}
@@ -889,6 +902,8 @@ async def test_threads_profile_auth_callback_and_publish_flow(tmp_path, monkeypa
         assert publish.json()["threads_reply_id"] == "reply_123"
         assert FakeThreadsClient.published[0]["threads_user_id"] == "12345"
         assert FakeThreadsClient.published[0]["access_token"] == "long-token"
+        assert FakeThreadsClient.published[0]["media_type"] == "IMAGE"
+        assert FakeThreadsClient.published[0]["image_url"] == "https://image.example/tesla-sunshade.jpg"
         assert FakeThreadsClient.replies[0]["reply_to_id"] == "post_123"
         assert "쿠팡 파트너스" in FakeThreadsClient.replies[0]["text"]
 

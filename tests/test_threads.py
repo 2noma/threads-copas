@@ -91,3 +91,26 @@ def test_publish_reply_sets_reply_to_id_on_container_request():
     assert transport.calls[-2]["data"]["text"] == "댓글 글"
     assert transport.calls[-2]["data"]["reply_to_id"] == "post_123"
     assert transport.calls[-1]["data"]["creation_id"] == "container_123"
+
+
+def test_publish_image_request_shape():
+    transport = FakeTransport()
+    client = ThreadsApiClient(
+        app_id="app-id",
+        app_secret="secret",
+        redirect_uri="https://example.com/callback",
+        transport=transport,
+    )
+
+    published = client.publish_image(
+        threads_user_id="12345",
+        access_token="long-token",
+        text="이미지 글",
+        image_url="https://image.example/product.jpg",
+    )
+
+    assert published["id"] == "post_123"
+    assert transport.calls[-2]["data"]["media_type"] == "IMAGE"
+    assert transport.calls[-2]["data"]["text"] == "이미지 글"
+    assert transport.calls[-2]["data"]["image_url"] == "https://image.example/product.jpg"
+    assert transport.calls[-1]["data"]["creation_id"] == "container_123"

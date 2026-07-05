@@ -95,7 +95,7 @@
             <span id="selected-product-label">no product</span>
           </div>
           <form id="threads-draft-form" class="form-grid">
-            <input name="partner_url" type="hidden" />
+            <input name="image_url" type="hidden" />
             <label>
               발행 프로필
               <select name="profile_key" id="threads-profile-select"></select>
@@ -106,6 +106,10 @@
                 <input name="product_url" required placeholder="https://link.coupang.com/a/..." />
                 <button class="small-button" id="coupang-preview-button" type="button">확인</button>
               </div>
+            </label>
+            <label class="wide">
+              댓글 딥링크 URL
+              <input name="partner_url" autocomplete="off" placeholder="https://link.coupang.com/a/... 직접 입력하면 댓글에 이 링크를 사용합니다." />
             </label>
             <div class="wide product-preview" id="coupang-product-preview" hidden></div>
             <label class="wide" id="product-name-fallback" hidden>
@@ -159,6 +163,6 @@
       </main>
     </div>
 
-    <script src="static/app.js?v=20260705-confirm-product-search"></script>
+    <script src="static/app.js?v=20260705-direct-deeplink-image"></script>
   </body>
 </html>

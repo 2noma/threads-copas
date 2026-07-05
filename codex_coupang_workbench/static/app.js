@@ -126,8 +126,9 @@ async function previewCoupangProduct() {
   const form = $("#threads-draft-form");
   const message = $("#coupang-preview-message");
   const productUrl = form.elements.product_url.value.trim();
+  const manualPartnerUrl = form.elements.partner_url.value.trim();
   state.productPreview = null;
-  form.elements.partner_url.value = "";
+  form.elements.image_url.value = "";
   renderProductPreview();
   if (!productUrl) {
     message.textContent = "쿠팡 URL을 입력하세요.";
@@ -144,7 +145,8 @@ async function previewCoupangProduct() {
       }),
     });
     state.productPreview = preview;
-    form.elements.partner_url.value = preview.partner_url || "";
+    form.elements.partner_url.value = manualPartnerUrl || preview.partner_url || "";
+    form.elements.image_url.value = preview.image_url || "";
     if (preview.product_name) {
       form.elements.product_name.value = preview.product_name;
     }
@@ -262,10 +264,11 @@ function renderProductPreview() {
     container.hidden = true;
     container.innerHTML = "";
     fallback.hidden = true;
-    $("#threads-draft-form").elements.partner_url.value = "";
+    $("#threads-draft-form").elements.image_url.value = "";
     return;
   }
   const facts = Array.isArray(preview.facts) ? preview.facts.filter(Boolean) : [];
+  const partnerUrl = $("#threads-draft-form").elements.partner_url.value.trim() || preview.partner_url;
   fallback.hidden = !preview.needs_product_name;
   container.hidden = false;
   container.innerHTML = `
@@ -281,7 +284,7 @@ function renderProductPreview() {
       ${preview.product_id ? `<span class="link-text">상품 ID: ${escapeHtml(preview.product_id)}</span>` : ""}
       ${preview.item_id ? `<span class="link-text">Item ID: ${escapeHtml(preview.item_id)}</span>` : ""}
       ${facts.length ? `<span class="link-text">${facts.map(escapeHtml).join(" · ")}</span>` : ""}
-      ${preview.partner_url ? `<span class="link-text">${escapeHtml(preview.partner_url)}</span>` : ""}
+      ${partnerUrl ? `<span class="link-text">${escapeHtml(partnerUrl)}</span>` : ""}
       ${
         preview.needs_product_name
           ? '<span class="link-text">상품명을 입력하고 확인을 다시 누르면 쿠팡 검색 API로 상품 정보를 확인합니다.</span>'
@@ -406,7 +409,7 @@ function bindEvents() {
     $("#selected-product-label").textContent = "no product";
     $("#product-name-fallback").hidden = true;
     $("#threads-draft-form").elements.product_name.value = "";
-    $("#threads-draft-form").elements.partner_url.value = "";
+    $("#threads-draft-form").elements.image_url.value = "";
     renderProductPreview();
   });
   $("#threads-draft-form").addEventListener("submit", generateDraft);
