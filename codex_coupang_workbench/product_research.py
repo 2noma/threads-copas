@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 
 @dataclass(frozen=True)
@@ -113,8 +113,9 @@ def fetch_best_product_context(
     product_url: str,
     product_name: str,
     timeout: float = 8.0,
+    proxy_url: str = "",
 ) -> ProductContext:
-    store_context = fetch_product_context(product_url, timeout=timeout)
+    store_context = fetch_product_context(product_url, timeout=timeout, proxy_url=proxy_url)
     if _has_enough_product_detail(store_context):
         return store_context
     official_context = fetch_official_product_context(product_name, timeout=timeout)
@@ -123,7 +124,7 @@ def fetch_best_product_context(
     return store_context
 
 
-def fetch_product_context(product_url: str, timeout: float = 8.0) -> ProductContext:
+def fetch_product_context(product_url: str, timeout: float = 8.0, proxy_url: str = "") -> ProductContext:
     clean_url = product_url.strip()
     if not clean_url:
         return ProductContext(source_url="")
@@ -138,7 +139,8 @@ def fetch_product_context(product_url: str, timeout: float = 8.0) -> ProductCont
         },
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        opener = _build_proxy_opener(proxy_url)
+        with opener.open(request, timeout=timeout) as response:
             body = response.read(1_000_000)
             charset = response.headers.get_content_charset() or "utf-8"
             text = body.decode(charset, errors="replace")
@@ -228,6 +230,20 @@ def _fetch_text(url: str, timeout: float = 8.0) -> str:
             return body.decode(charset, errors="replace")
     except (OSError, URLError, ValueError):
         return ""
+
+
+def _build_proxy_opener(proxy_url: str):
+    clean_proxy_url = proxy_url.strip()
+    if not clean_proxy_url:
+        return build_opener()
+    return build_opener(
+        ProxyHandler(
+            {
+                "http": clean_proxy_url,
+                "https": clean_proxy_url,
+            }
+        )
+    )
 
 
 def _select_product_image(candidates: list[str]) -> str:

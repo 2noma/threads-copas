@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -196,7 +197,8 @@ def _urlopen_transport(
             payload = response.read()
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise ThreadsApiError(f"Threads API HTTP {exc.code}: {detail}") from exc
+        safe_detail = _redact_sensitive_detail(detail, data=data, params=params)
+        raise ThreadsApiError(f"Threads API HTTP {exc.code}: {safe_detail}") from exc
     except (OSError, URLError) as exc:
         raise ThreadsApiError(f"Threads API request failed: {exc}") from exc
     try:
@@ -204,7 +206,32 @@ def _urlopen_transport(
     except json.JSONDecodeError as exc:
         raise ThreadsApiError("Threads API returned invalid JSON") from exc
     if isinstance(parsed, dict) and parsed.get("error"):
-        raise ThreadsApiError(str(parsed["error"]))
+        raise ThreadsApiError(_redact_sensitive_detail(str(parsed["error"]), data=data, params=params))
     if not isinstance(parsed, dict):
         raise ThreadsApiError("Threads API returned an unexpected response")
     return parsed
+
+
+def _redact_sensitive_detail(
+    detail: str,
+    *,
+    data: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> str:
+    redacted = detail
+    for source in (data or {}, params or {}):
+        for key in ("client_secret", "access_token"):
+            value = str(source.get(key, "")).strip()
+            if len(value) >= 4:
+                redacted = redacted.replace(value, "[redacted]")
+    redacted = re.sub(
+        r"(Invalid client_secret:\s*)[^\"\\n,}]+",
+        r"\1[redacted]",
+        redacted,
+    )
+    redacted = re.sub(
+        r'("(?:client_secret|access_token)"\s*:\s*")[^"]+(")',
+        r"\1[redacted]\2",
+        redacted,
+    )
+    return redacted

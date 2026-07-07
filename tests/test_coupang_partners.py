@@ -69,7 +69,7 @@ def test_client_builds_deeplink_and_search_requests():
 def test_fetch_partner_product_context_maps_product_data(monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.coupang_partners.resolve_coupang_redirect",
-        lambda url: "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
+        lambda url, timeout=8.0, proxy_url="": "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
     )
     product, resolved_url = fetch_partner_product_context(
         "https://link.coupang.com/a/example",
@@ -84,6 +84,32 @@ def test_fetch_partner_product_context_maps_product_data(monkeypatch):
     assert product.partner_url == "https://link.coupang.com/a/partner"
     assert product.image_url == "https://image.example/item.jpg"
     assert "자동차용품 카테고리 상품" in product.facts
+
+
+def test_fetch_partner_product_context_passes_proxy_to_redirect(monkeypatch):
+    calls = []
+
+    def fake_resolve(url, timeout=8.0, proxy_url=""):
+        calls.append({"url": url, "timeout": timeout, "proxy_url": proxy_url})
+        return "https://www.coupang.com/vp/products/9579586125?itemId=28594687231"
+
+    monkeypatch.setattr("codex_coupang_workbench.coupang_partners.resolve_coupang_redirect", fake_resolve)
+
+    fetch_partner_product_context(
+        "https://link.coupang.com/a/example",
+        access_key="access",
+        secret_key="secret",
+        proxy_url="http://proxy.example:8080",
+        transport=FakeCoupangTransport(),
+    )
+
+    assert calls == [
+        {
+            "url": "https://link.coupang.com/a/example",
+            "timeout": 8.0,
+            "proxy_url": "http://proxy.example:8080",
+        }
+    ]
 
 
 def test_fetch_partner_product_context_does_not_use_unmatched_search_result(monkeypatch):
@@ -107,7 +133,7 @@ def test_fetch_partner_product_context_does_not_use_unmatched_search_result(monk
 
     monkeypatch.setattr(
         "codex_coupang_workbench.coupang_partners.resolve_coupang_redirect",
-        lambda url: "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
+        lambda url, timeout=8.0, proxy_url="": "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
     )
     product, resolved_url = fetch_partner_product_context(
         "https://link.coupang.com/a/example",
@@ -156,7 +182,7 @@ def test_fetch_partner_product_context_uses_keyword_fallback_for_exact_product(m
 
     monkeypatch.setattr(
         "codex_coupang_workbench.coupang_partners.resolve_coupang_redirect",
-        lambda url: "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
+        lambda url, timeout=8.0, proxy_url="": "https://www.coupang.com/vp/products/9579586125?itemId=28594687231",
     )
     product, _resolved_url = fetch_partner_product_context(
         "https://link.coupang.com/a/example",

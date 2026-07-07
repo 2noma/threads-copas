@@ -9,6 +9,7 @@ class SettingsPayload(BaseModel):
     writer_persona: str = ""
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
+    coupang_proxy_url: str = ""
     codex_model: str = ""
     threads_app_id: str = ""
     threads_app_secret: str = ""

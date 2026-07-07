@@ -1,4 +1,4 @@
-from codex_coupang_workbench.threads import ThreadsApiClient
+from codex_coupang_workbench.threads import ThreadsApiClient, _redact_sensitive_detail
 
 
 class FakeTransport:
@@ -114,3 +114,20 @@ def test_publish_image_request_shape():
     assert transport.calls[-2]["data"]["text"] == "이미지 글"
     assert transport.calls[-2]["data"]["image_url"] == "https://image.example/product.jpg"
     assert transport.calls[-1]["data"]["creation_id"] == "container_123"
+
+
+def test_redact_sensitive_detail_removes_client_secret_and_access_token_values():
+    detail = (
+        '{"error":{"message":"Invalid client_secret: 5b560658d2937f0d9b093b76363cc079",'
+        '"access_token":"EA1234567890SECRET"}}'
+    )
+
+    redacted = _redact_sensitive_detail(
+        detail,
+        data={"client_secret": "5b560658d2937f0d9b093b76363cc079"},
+        params={"access_token": "EA1234567890SECRET"},
+    )
+
+    assert "5b560658d2937f0d9b093b76363cc079" not in redacted
+    assert "EA1234567890SECRET" not in redacted
+    assert "Invalid client_secret: [redacted]" in redacted

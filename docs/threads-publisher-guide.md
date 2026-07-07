@@ -56,11 +56,20 @@ http://127.0.0.1:8765
 - `Threads App ID`: Meta 앱 ID
 - `Threads App Secret`: Meta 앱 시크릿
 - `Redirect URI`: `http://127.0.0.1:8765/api/threads/auth/callback`
+- `Coupang Proxy URL`: 쿠팡 상품 페이지 조회가 차단될 때만 입력하는 HTTP/HTTPS 프록시 URL
 - `Codex Model`: 기본값은 `gpt-5.5`
 
 입력 후 `Save Settings`를 누릅니다.
 
 Threads 글 생성은 별도 OpenAI API Key를 저장하지 않고 현재 머신에 로그인된 Codex CLI 인증을 사용합니다. Codex 로그인이 필요하면 터미널에서 `codex login`을 먼저 실행합니다.
+
+쿠팡 상품 URL 조회가 서버에서 막히는 경우 `Coupang Proxy URL`에 아래 형식의 프록시를 저장합니다.
+
+```text
+http://user:password@proxy-host:port
+```
+
+이 프록시는 쿠팡 단축 링크 리다이렉트와 상품 페이지 조회에만 사용됩니다. Threads/Meta API와 쿠팡 파트너스 API는 프록시를 타지 않습니다. 프록시 URL은 비밀번호가 포함될 수 있으므로 저장 후 화면과 API 응답에서는 `********`로 표시됩니다.
 
 ## 2. Profiles 추가
 

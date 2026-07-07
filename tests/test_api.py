@@ -127,12 +127,14 @@ async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
                 "threads_app_secret": "super-secret",
                 "threads_redirect_uri": "http://test/callback",
                 "coupang_secret_key": "coupang-secret",
+                "coupang_proxy_url": "http://proxy-user:proxy-pass@proxy.example:8080",
                 "codex_model": "gpt-5.5",
             },
         )
         assert first.status_code == 200
         assert first.json()["threads_app_secret"] == "********"
         assert first.json()["coupang_secret_key"] == "********"
+        assert first.json()["coupang_proxy_url"] == "********"
         assert first.json()["codex_model"] == "gpt-5.5"
 
         second = await client.put(
@@ -148,6 +150,7 @@ async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
         settings = await client.get("/api/settings")
         assert settings.json()["threads_app_secret"] == "********"
         assert settings.json()["coupang_secret_key"] == "********"
+        assert settings.json()["coupang_proxy_url"] == "********"
         assert settings.json()["codex_model"] == "gpt-5.5"
 
         import_start = await client.get("/api/threads/auth/import/start")
@@ -160,7 +163,7 @@ async def test_threads_draft_prefers_codex_auth_generation(tmp_path, monkeypatch
 
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name: ProductContext(
+        lambda url, product_name, proxy_url="": ProductContext(
             source_url=url,
             resolved_url="https://www.coupang.com/vp/products/example",
             page_title="테슬라 센터 콘솔 수납함",
@@ -269,6 +272,7 @@ async def test_coupang_product_preview_returns_partner_product(tmp_path, monkeyp
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
+                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -306,6 +310,7 @@ async def test_coupang_product_preview_allows_deeplink_when_name_is_missing(tmp_
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
+                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -346,6 +351,7 @@ async def test_threads_draft_rejects_manual_name_without_api_confirmation(tmp_pa
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
+                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -387,6 +393,7 @@ async def test_coupang_product_preview_uses_manual_name_as_search_keyword(tmp_pa
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
+                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -399,6 +406,7 @@ async def test_coupang_product_preview_uses_manual_name_as_search_keyword(tmp_pa
 
         assert response.status_code == 200
         assert calls[0]["product_keyword"] == "세상의모든제품 테슬라 모델Y주니퍼 센터 콘솔 수납함"
+        assert calls[0]["proxy_url"] == "http://proxy.example:8080"
         payload = response.json()
         assert payload["product_name"].startswith("세상의모든제품")
         assert payload["image_url"] == "https://image.example/tesla.jpg"
@@ -452,7 +460,7 @@ async def test_threads_draft_reuses_preview_partner_url(tmp_path, monkeypatch):
 async def test_threads_draft_requires_coupang_api_when_product_context_is_blocked(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name: ProductContext(source_url=url, resolved_url=url, facts=[]),
+        lambda url, product_name, proxy_url="": ProductContext(source_url=url, resolved_url=url, facts=[]),
     )
     app = create_app(tmp_path / "api.sqlite3")
     transport = ASGITransport(app=app)
@@ -471,7 +479,7 @@ async def test_threads_draft_requires_coupang_api_when_product_context_is_blocke
 async def test_api_create_job_can_infer_product_name_and_image_from_url(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name: ProductContext(
+        lambda url, product_name, proxy_url="": ProductContext(
             source_url=url,
             resolved_url="https://www.logitech.com/ko-kr/shop/p/mx-master-4",
             page_title="MX Master 4 무선 마우스 | Logitech",
@@ -500,7 +508,7 @@ async def test_api_create_job_can_infer_product_name_and_image_from_url(tmp_path
 async def test_api_create_job_reuses_known_product_context_for_same_url(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name: ProductContext(source_url=url, resolved_url=url, facts=[]),
+        lambda url, product_name, proxy_url="": ProductContext(source_url=url, resolved_url=url, facts=[]),
     )
     app = create_app(tmp_path / "api.sqlite3")
     transport = ASGITransport(app=app)
@@ -664,7 +672,7 @@ async def test_api_rejects_approval_without_candidate_image(tmp_path):
 async def test_api_campaign_generation_and_generated_image_update(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name: ProductContext(source_url=url, resolved_url=url, facts=[]),
+        lambda url, product_name, proxy_url="": ProductContext(source_url=url, resolved_url=url, facts=[]),
     )
     app = create_app(tmp_path / "api.sqlite3")
     transport = ASGITransport(app=app)
@@ -703,7 +711,7 @@ async def test_api_campaign_generation_and_generated_image_update(tmp_path, monk
 
 @pytest.mark.anyio
 async def test_api_campaign_uses_fetched_product_context(tmp_path, monkeypatch):
-    def fake_fetch_best_product_context(url, product_name):
+    def fake_fetch_best_product_context(url, product_name, proxy_url=""):
         return ProductContext(
             source_url=url,
             resolved_url="https://www.coupang.com/vp/products/example",
@@ -743,7 +751,7 @@ async def test_api_campaign_uses_fetched_product_context(tmp_path, monkeypatch):
 async def test_api_campaign_prefers_saved_product_name_over_official_page_title(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name: ProductContext(
+        lambda url, product_name, proxy_url="": ProductContext(
             source_url=url,
             resolved_url="https://www.logitech.com/ko-kr/shop/p/mx-master-4",
             page_title="MX Master 4 무선 마우스 | Logitech",
@@ -787,7 +795,7 @@ async def test_api_campaign_reuses_known_campaign_when_same_url_later_blocks_con
         ProductContext(source_url="https://link.coupang.com/a/table", resolved_url="https://link.coupang.com/a/table", facts=[]),
     ]
 
-    def fake_fetch_best_product_context(url, product_name):
+    def fake_fetch_best_product_context(url, product_name, proxy_url=""):
         return contexts.pop(0) if contexts else ProductContext(source_url=url, resolved_url=url, facts=[])
 
     monkeypatch.setattr("codex_coupang_workbench.main.fetch_best_product_context", fake_fetch_best_product_context)
@@ -832,7 +840,7 @@ async def test_threads_profile_auth_callback_and_publish_flow(tmp_path, monkeypa
     )
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name: ProductContext(
+        lambda url, product_name, proxy_url="": ProductContext(
             source_url=url,
             resolved_url="https://www.coupang.com/vp/products/example",
             page_title="테슬라 파노라마 선루프 썬쉐이드 차광 커버",

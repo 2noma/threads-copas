@@ -38,7 +38,7 @@ DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "workbench.sqlite3"
 STATIC_DIR = PACKAGE_DIR / "static"
 ICON_PATH = PACKAGE_DIR.parent / "assets" / "appicon.ico"
 THREADS_IMPORT_STATE_PREFIX = "import-current-profile:"
-SECRET_SETTING_KEYS = {"coupang_secret_key", "threads_app_secret", "openai_api_key"}
+SECRET_SETTING_KEYS = {"coupang_proxy_url", "coupang_secret_key", "threads_app_secret", "openai_api_key"}
 SECRET_MASK = "********"
 
 
@@ -78,6 +78,7 @@ def fetch_coupang_partner_product(
         secret_key=secret_key,
         sub_id=settings.get("coupang_sub_id", ""),
         product_keyword=product_keyword,
+        proxy_url=settings.get("coupang_proxy_url", ""),
     )
     return partner_product, resolved_url
 
@@ -207,7 +208,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             product_name = product_name or known_context.get("product_name", "")
             image_url = image_url or known_context.get("image_url", "")
         if not product_name or not image_url:
-            product_context = fetch_best_product_context(payload.product_url, product_name)
+            product_context = fetch_best_product_context(
+                payload.product_url,
+                product_name,
+                proxy_url=store.get_settings().get("coupang_proxy_url", ""),
+            )
             product_name = product_name or product_context.page_title
             image_url = image_url or product_context.image_url
         return store.add_job(
@@ -244,7 +249,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
         settings = store.get_settings()
-        product_context = fetch_best_product_context(job["product_url"], job["product_name"])
+        product_context = fetch_best_product_context(
+            job["product_url"],
+            job["product_name"],
+            proxy_url=settings.get("coupang_proxy_url", ""),
+        )
         if not (product_context.facts or product_context.description.strip()):
             known_campaign = store.get_known_campaign_context(job["product_url"])
             if known_campaign:
@@ -472,7 +481,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             detail = api_error or "쿠팡 파트너스 API에서 상품 정보를 먼저 확인해 주세요."
             raise HTTPException(status_code=400, detail=detail)
         if product_context is None:
-            product_context = fetch_best_product_context(product_url, product_name)
+            product_context = fetch_best_product_context(
+                product_url,
+                product_name,
+                proxy_url=settings.get("coupang_proxy_url", ""),
+            )
         if not product_name:
             known_context = store.get_known_product_context(product_url)
             product_name = known_context.get("product_name", "") or product_context.page_title
