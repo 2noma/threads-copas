@@ -3,6 +3,7 @@ const state = {
   records: [],
   draftJobId: "",
   draftImageUrl: "",
+  hookImageVariant: 0,
   productPreview: null,
   channelIds: [],
 };
@@ -243,6 +244,10 @@ async function createCoupangDeeplink() {
 async function uploadGeneratedHookImage() {
   const form = $("#threads-draft-form");
   const message = $("#threads-media-message");
+  if (shouldSkipHookImage(form)) {
+    message.textContent = "이미지 없이 글만 만들기가 켜져 있습니다.";
+    return;
+  }
   const imageBase64 = form.elements.generated_image_base64.value.trim();
   if (!imageBase64) {
     message.textContent = "Base64 이미지를 붙여넣으세요.";
@@ -251,21 +256,7 @@ async function uploadGeneratedHookImage() {
   setBusy(true);
   try {
     message.textContent = "이미지 URL 생성 중...";
-    const uploaded = await api("/api/threads/media", {
-      method: "POST",
-      body: JSON.stringify({
-        filename: "threads-hook-image.png",
-        content_type: detectImageContentType(imageBase64),
-        image_base64: imageBase64,
-      }),
-    });
-    form.elements.hook_image_url.value = uploaded.image_url || "";
-    state.draftJobId = "";
-    state.draftImageUrl = "";
-    renderThreadImagePreview(
-      uploaded.image_url || "",
-      form.elements.product_name.value.trim() || state.productPreview?.product_name || ""
-    );
+    await uploadHookImageBase64(form, imageBase64);
     message.textContent = "이미지 URL 준비 완료";
     clearMessage(message);
   } catch (error) {
@@ -274,6 +265,150 @@ async function uploadGeneratedHookImage() {
   } finally {
     setBusy(false);
   }
+}
+
+async function uploadHookImageBase64(form, imageBase64) {
+  const uploaded = await api("/api/threads/media", {
+    method: "POST",
+    body: JSON.stringify({
+      filename: "threads-hook-image.png",
+      content_type: detectImageContentType(imageBase64),
+      image_base64: imageBase64,
+    }),
+  });
+  form.elements.hook_image_url.value = uploaded.image_url || "";
+  state.draftJobId = "";
+  state.draftImageUrl = "";
+  renderThreadImagePreview(
+    uploaded.image_url || "",
+    form.elements.product_name.value.trim() || state.productPreview?.product_name || ""
+  );
+  return uploaded.image_url || "";
+}
+
+async function ensureHookImageForDraft(form) {
+  if (shouldSkipHookImage(form)) {
+    clearHookImageForTextOnly(form);
+    const message = $("#threads-media-message");
+    message.textContent = "이미지 없이 글만 생성합니다.";
+    clearMessage(message);
+    return "";
+  }
+  const existingImageUrl = form.elements.hook_image_url.value.trim();
+  if (existingImageUrl) {
+    return existingImageUrl;
+  }
+  const message = $("#threads-media-message");
+  const imageBase64 = form.elements.generated_image_base64.value.trim();
+  if (imageBase64) {
+    message.textContent = "붙여넣은 이미지 업로드 중...";
+    return uploadHookImageBase64(form, imageBase64);
+  }
+  return generateAutoHookImage(form);
+}
+
+function productFactsForHookImage() {
+  return Array.isArray(state.productPreview?.facts) ? state.productPreview.facts : [];
+}
+
+async function generateAutoHookImage(form, options = {}) {
+  const message = $("#threads-media-message");
+  const productName = form.elements.product_name.value.trim() || state.productPreview?.product_name || "";
+  if (!productName) {
+    throw new Error("상품명을 확인한 뒤 후킹 이미지를 만들 수 있습니다.");
+  }
+  message.textContent = options.status || "Codex로 실사 후킹 이미지 생성 중... 1분 정도 걸릴 수 있습니다.";
+  const generated = await api("/api/threads/auto-hook-image", {
+    method: "POST",
+    body: JSON.stringify({
+      product_url: form.elements.product_url.value.trim(),
+      product_name: productName,
+      facts: productFactsForHookImage(),
+      variant: state.hookImageVariant,
+    }),
+  });
+  form.elements.hook_image_url.value = generated.image_url || "";
+  state.draftJobId = "";
+  state.draftImageUrl = "";
+  renderThreadImagePreview(generated.image_url || "", productName);
+  message.textContent = "후킹 이미지 준비 완료";
+  clearMessage(message);
+  return generated.image_url || "";
+}
+
+async function regenerateHookImage() {
+  const form = $("#threads-draft-form");
+  const message = $("#threads-media-message");
+  if (shouldSkipHookImage(form)) {
+    message.textContent = "이미지 생성을 켠 뒤 다시 만들 수 있습니다.";
+    return;
+  }
+  if (!state.productPreview) {
+    message.textContent = "먼저 상품 확인을 완료하세요.";
+    return;
+  }
+  const previousVariant = state.hookImageVariant;
+  const previousImageUrl = form.elements.hook_image_url.value;
+  state.hookImageVariant = previousVariant + 1;
+  form.elements.hook_image_url.value = "";
+  form.elements.generated_image_base64.value = "";
+  renderThreadImagePreview();
+  setBusy(true);
+  try {
+    await generateAutoHookImage(form, { status: "Codex로 실사 이미지 다시 생성 중... 1분 정도 걸릴 수 있습니다." });
+  } catch (error) {
+    console.error(error);
+    state.hookImageVariant = previousVariant;
+    form.elements.hook_image_url.value = previousImageUrl;
+    renderThreadImagePreview(
+      previousImageUrl,
+      form.elements.product_name.value.trim() || state.productPreview?.product_name || ""
+    );
+    message.textContent = error.message || "후킹 이미지를 다시 만들지 못했습니다.";
+  } finally {
+    setBusy(false);
+  }
+}
+
+function shouldSkipHookImage(form) {
+  return Boolean(form.elements.skip_hook_image?.checked);
+}
+
+function clearHookImageForTextOnly(form) {
+  form.elements.hook_image_url.value = "";
+  form.elements.generated_image_base64.value = "";
+  state.draftJobId = "";
+  state.draftImageUrl = "";
+  renderThreadImagePreview();
+}
+
+function createCodexImagePrompt() {
+  const form = $("#threads-draft-form");
+  const message = $("#codex-image-prompt-message");
+  const productName = form.elements.product_name.value.trim() || state.productPreview?.product_name || "";
+  if (!state.productPreview || !productName) {
+    message.textContent = "먼저 상품 확인을 완료하세요.";
+    return;
+  }
+  const facts = Array.isArray(state.productPreview.facts) ? state.productPreview.facts.filter(Boolean).slice(0, 5) : [];
+  const factLines = facts.length ? facts.map((fact) => `- ${fact}`).join("\n") : "- 상품 상세 팩트 없음";
+  form.elements.codex_image_prompt.value = [
+    "Threads에 올릴 1:1 정사각형 실사 후킹 이미지를 만들어줘.",
+    "",
+    "상품 맥락은 참고만 해:",
+    `- 상품명: ${productName}`,
+    factLines,
+    "",
+    "이미지 조건:",
+    "- 상품 카테고리를 자연스럽게 사용하는 실사 라이프스타일 장면",
+    "- 실제 상품, 유사 상품, 포장, 박스, 쇼핑앱 화면, 가격표, 영수증은 절대 보이지 않게",
+    "- 브랜드명, 로고, 워터마크, readable text 없이",
+    "- 광고 이미지처럼 보이지 않게",
+    "- 사람들이 무슨 상황인지 궁금해서 댓글을 열어보고 싶게",
+    "- 자연광, 현실적인 사진 느낌, 깔끔한 구도",
+  ].join("\n");
+  message.textContent = "프롬프트 준비 완료";
+  clearMessage(message);
 }
 
 async function generateDraft(event) {
@@ -301,9 +436,16 @@ async function generateDraft(event) {
   }
   setBusy(true);
   try {
+    message.textContent = shouldSkipHookImage(form) ? "텍스트 초안 생성 중..." : "이미지 준비 중...";
+    await ensureHookImageForDraft(form);
     message.textContent = "generating...";
     const payload = formToObject(form);
     delete payload.generated_image_base64;
+    payload.skip_hook_image = shouldSkipHookImage(form);
+    if (payload.skip_hook_image) {
+      payload.hook_image_url = "";
+      payload.image_url = "";
+    }
     const draft = await api("/api/threads/draft", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -591,12 +733,14 @@ function bindEvents() {
     state.productPreview = null;
     state.draftJobId = "";
     state.draftImageUrl = "";
+    state.hookImageVariant = 0;
     $("#selected-product-label").textContent = "no product";
     $("#product-name-fallback").hidden = true;
     draftForm.elements.product_name.value = "";
     draftForm.elements.image_url.value = "";
     draftForm.elements.hook_image_url.value = "";
     draftForm.elements.generated_image_base64.value = "";
+    draftForm.elements.codex_image_prompt.value = "";
     draftForm.elements.partner_url.value = "";
     renderThreadImagePreview();
     renderProductPreview();
@@ -611,8 +755,20 @@ function bindEvents() {
       draftForm.elements.product_name.value.trim() || state.productPreview?.product_name || ""
     );
   });
+  draftForm.elements.skip_hook_image.addEventListener("change", () => {
+    const message = $("#threads-media-message");
+    if (shouldSkipHookImage(draftForm)) {
+      clearHookImageForTextOnly(draftForm);
+      message.textContent = "이미지 없이 글만 생성합니다.";
+    } else {
+      message.textContent = "이미지 생성을 다시 사용할 수 있습니다.";
+    }
+    clearMessage(message);
+  });
   draftForm.addEventListener("submit", generateDraft);
+  $("#codex-image-prompt-button").addEventListener("click", createCodexImagePrompt);
   $("#threads-media-upload-button").addEventListener("click", uploadGeneratedHookImage);
+  $("#threads-auto-image-button").addEventListener("click", regenerateHookImage);
   $("#threads-publish-button").addEventListener("click", publishDraft);
   $("#refresh-button").addEventListener("click", refreshAll);
   $("#threads-profiles-list").addEventListener("click", async (event) => {

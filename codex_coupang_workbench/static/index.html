@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Threads Coupang Publisher</title>
-    <link rel="stylesheet" href="static/styles.css?v=20260708-generated-media-upload" />
+    <link rel="stylesheet" href="static/styles.css?v=20260708-codex-image" />
   </head>
   <body>
     <div class="app-shell">
@@ -51,7 +51,7 @@
               </label>
               <label>
                 Coupang Access Key
-                <input name="coupang_access_key" autocomplete="off" placeholder="Coupang Partners Access Key" />
+                <input name="coupang_access_key" type="password" autocomplete="new-password" placeholder="Coupang Partners Access Key" data-secret-field />
               </label>
               <label>
                 Coupang Secret Key
@@ -126,17 +126,32 @@ sinabroinfo</textarea>
             </label>
             <div class="wide product-preview" id="coupang-product-preview" hidden></div>
             <label class="wide">
-              AI 후킹 이미지 Base64
-              <textarea name="generated_image_base64" rows="4" autocomplete="off" placeholder="Image Gen 결과의 base64 또는 data:image/png;base64,... 값을 붙여넣고 이미지 URL 만들기를 누르세요."></textarea>
+              Codex 이미지 프롬프트
+              <textarea name="codex_image_prompt" rows="7" autocomplete="off" readonly placeholder="상품 확인 후 Codex 이미지 프롬프트 만들기를 누르세요."></textarea>
+            </label>
+            <div class="wide form-actions">
+              <button class="small-button" id="codex-image-prompt-button" type="button">Codex 이미지 프롬프트 만들기</button>
+              <span id="codex-image-prompt-message" class="inline-message"></span>
+            </div>
+            <label class="wide">
+              Codex 후킹 이미지 Base64
+              <textarea name="generated_image_base64" rows="4" autocomplete="off" placeholder="비워두면 Generate Thread에서 Codex CLI가 실사 후킹 이미지를 자동 생성합니다. 직접 만든 이미지를 쓰려면 base64 또는 data:image/png;base64,... 값을 붙여넣으세요."></textarea>
             </label>
             <label class="wide">
               후킹 이미지 URL
-              <input name="hook_image_url" autocomplete="off" placeholder="이미지 URL 만들기 후 자동 입력됩니다." />
+              <input name="hook_image_url" autocomplete="off" placeholder="Generate Thread 또는 이미지 다시 만들기 후 자동 입력됩니다." />
             </label>
+            <div class="wide hook-image-checks">
+              <label>
+                <input name="skip_hook_image" type="checkbox" value="true" />
+                이미지 없이 글만 만들기
+              </label>
+            </div>
             <input name="hook_image_no_product" type="hidden" value="true" />
             <input name="hook_image_permission_reviewed" type="hidden" value="true" />
             <div class="wide form-actions">
               <button class="small-button" id="threads-media-upload-button" type="button">이미지 URL 만들기</button>
+              <button class="small-button" id="threads-auto-image-button" type="button">이미지 다시 만들기</button>
               <span id="threads-media-message" class="inline-message"></span>
             </div>
             <div class="wide form-actions">
@@ -187,6 +202,6 @@ sinabroinfo</textarea>
       </main>
     </div>
 
-    <script src="static/app.js?v=20260708-generated-media-upload"></script>
+    <script src="static/app.js?v=20260708-codex-image"></script>
   </body>
 </html>

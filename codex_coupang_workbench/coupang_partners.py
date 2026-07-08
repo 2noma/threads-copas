@@ -16,6 +16,7 @@ from .product_research import ProductContext
 COUPANG_PARTNERS_DOMAIN = "https://api-gateway.coupang.com"
 DEEPLINK_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/deeplink"
 PRODUCT_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/products/search"
+MAX_SEARCH_KEYWORD_LENGTH = 50
 
 JsonTransport = Callable[[str, str, dict[str, str], dict[str, Any] | None], dict[str, Any]]
 
@@ -79,7 +80,7 @@ class CoupangPartnersClient:
         ).strip()
 
     def search_products(self, keyword: str, *, limit: int = 10, image_size: str = "512x512") -> list[dict[str, Any]]:
-        clean_keyword = keyword.strip()
+        clean_keyword = keyword.strip()[:MAX_SEARCH_KEYWORD_LENGTH]
         if not clean_keyword:
             return []
         query: dict[str, str | int] = {

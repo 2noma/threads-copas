@@ -98,13 +98,15 @@ def _build_codex_prompt(
             "",
             "반드시 지킬 것:",
             "- 링크와 고지 문구는 본문에 쓰지 마. 링크와 고지는 별도 댓글에 들어간다.",
+            "- '자세한 건 댓글에 남겨둘게요' 같은 댓글 안내 문장 쓰지 않기",
+            "- 해시태그 쓰지 않기",
             "- 가격, 할인율, 배송일, 재고, 리뷰 수는 쓰지 않기",
             "- 입력에 없는 효과, 인증, 성능, 호환 모델은 지어내지 않기",
             "- bullet 목록 금지",
-            "- 사람들이 해당 상품이 뭔지 궁금해서 댓글을 열어보고 싶게 작성하기",
+            "- 사람들이 해당 상품이 뭔지 궁금해지게 작성하기",
             "- 350자 이내",
             "- 상품명은 필요하면 자연스럽게 한 번만 언급하기",
-            "- 사용 장면, 궁금증 유도, 구매 전 확인 포인트, 해시태그 포함",
+            "- 사용 장면, 궁금증 유도, 구매 전 확인 포인트 포함",
             "",
             f"상품명: {product_name.strip() or '상품명 자동 확인 필요'}",
             f"쿠팡 URL: {product_url.strip()}",
@@ -123,5 +125,18 @@ def _normalize_generated_post(text: str, product_url: str) -> str:
     if clean_url:
         clean_text = clean_text.replace(clean_url, "")
     clean_text = clean_text.replace("#쿠팡파트너스", "")
-    clean_text = "\n".join(line.rstrip() for line in clean_text.splitlines())
+    clean_text = "\n".join(
+        line.rstrip()
+        for line in clean_text.splitlines()
+        if not _should_drop_generated_line(line)
+    )
     return clean_text.strip()
+
+
+def _should_drop_generated_line(line: str) -> bool:
+    clean_line = line.strip()
+    if clean_line.startswith("#"):
+        return True
+    if "댓글" in clean_line and any(term in clean_line for term in ("남겨", "남길", "확인", "링크", "자세한")):
+        return True
+    return False

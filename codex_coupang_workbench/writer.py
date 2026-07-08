@@ -201,7 +201,6 @@ def generate_threads_post(
         facts.extend(_normalize_facts([memo]))
     public_facts = _public_content_facts(_dedupe(facts))
     detail_line = _threads_detail_sentence(clean_name, public_facts)
-    category_tags = _threads_tags(clean_name)
 
     return "\n\n".join(
         [
@@ -210,7 +209,6 @@ def generate_threads_post(
             detail_line,
             _threads_usage_sentence(clean_name, public_facts),
             _threads_check_sentence(clean_name),
-            " ".join(tag for tag in category_tags if tag != "#쿠팡파트너스"),
         ]
     )
 
@@ -230,20 +228,6 @@ def _build_tags(product_name: str) -> list[str]:
         if tag not in deduped:
             deduped.append(tag)
     return deduped
-
-
-def _threads_tags(product_name: str) -> list[str]:
-    tags = ["#쿠팡파트너스"]
-    name = product_name.lower()
-    if "테슬라" in product_name or "tesla" in name:
-        tags.extend(["#테슬라용품", "#차량용품"])
-    elif any(term in product_name for term in ("강아지", "반려", "펫", "하네스", "물티슈")):
-        tags.extend(["#반려동물용품", "#펫템"])
-    elif any(term in product_name for term in ("우산", "레인", "부츠", "생활")):
-        tags.extend(["#생활템", "#장마템"])
-    else:
-        tags.extend(["#생활템", "#쿠팡추천"])
-    return tags[:4]
 
 
 def _threads_hook_sentence(product_name: str) -> str:

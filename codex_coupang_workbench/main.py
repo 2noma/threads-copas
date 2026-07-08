@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from .codex_image import CodexImageError, generate_codex_hook_image
 from .coupang_partners import (
     CoupangPartnerProduct,
     CoupangPartnersClient,
@@ -29,6 +30,7 @@ from .schemas import (
     MediaCandidatePayload,
     PublishHandoff,
     SettingsPayload,
+    ThreadsAutoHookImagePayload,
     ThreadsDraftPayload,
     ThreadsMediaUploadPayload,
     ThreadsProfilePayload,
@@ -47,10 +49,10 @@ STATIC_DIR = PACKAGE_DIR / "static"
 ICON_PATH = PACKAGE_DIR.parent / "assets" / "appicon.ico"
 THREADS_IMPORT_STATE_PREFIX = "import-current-profile:"
 SECRET_SETTING_KEYS = {
+    "coupang_access_key",
     "coupang_secret_key",
     "threads_app_secret",
     "threads_service_api_key",
-    "openai_api_key",
 }
 REMOVED_SETTING_KEYS = {"coupang_proxy_url"}
 SECRET_MASK = "********"
@@ -523,6 +525,42 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         except ThreadsBridgeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from None
 
+    @app.post("/api/threads/auto-hook-image")
+    def generate_auto_threads_hook_image(
+        payload: ThreadsAutoHookImagePayload,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, str]:
+        settings = store.get_settings()
+        if not uses_remote_threads_service(settings):
+            raise HTTPException(status_code=400, detail="Threads Service URL is required to host generated images")
+        product_name = payload.product_name.strip()
+        if not product_name:
+            raise HTTPException(status_code=400, detail="상품명을 확인한 뒤 후킹 이미지를 만들 수 있습니다.")
+        try:
+            hook_image = generate_codex_hook_image(
+                model=settings.get("codex_model", "").strip() or DEFAULT_CODEX_MODEL,
+                product_name=product_name,
+                product_url=payload.product_url,
+                product_facts=payload.facts,
+                variant=payload.variant,
+            )
+        except CodexImageError as exc:
+            raise HTTPException(status_code=502, detail=f"Codex image generation failed: {exc}") from None
+        try:
+            uploaded = get_threads_bridge_client(settings).upload_media(
+                filename=hook_image.filename,
+                content_type=hook_image.content_type,
+                image_base64=hook_image.image_base64,
+            )
+        except ThreadsBridgeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from None
+        return {
+            "image_url": uploaded.get("image_url", ""),
+            "content_type": hook_image.content_type,
+            "image_base64": hook_image.image_base64,
+            "variant": str(max(0, payload.variant)),
+        }
+
     @app.post("/api/threads/profiles")
     def upsert_threads_profile(
         payload: ThreadsProfilePayload,
@@ -642,7 +680,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         product_url = payload.product_url.strip()
         product_context = None
         partner_url = payload.partner_url.strip()
-        hook_image_url = payload.hook_image_url.strip() or payload.image_url.strip()
+        hook_image_url = "" if payload.skip_hook_image else payload.hook_image_url.strip() or payload.image_url.strip()
         if hook_image_url and not payload.hook_image_permission_reviewed:
             raise HTTPException(status_code=400, detail="후킹 이미지 권한 검토가 필요합니다.")
         if hook_image_url and not payload.hook_image_no_product:
