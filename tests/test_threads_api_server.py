@@ -1,12 +1,14 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from codex_coupang_workbench.threads import ThreadsApiError
 from codex_coupang_workbench.threads_api import create_threads_api_app
 
 
 class FakeThreadsClient:
     published = []
     replies = []
+    fail_reply = False
 
     def __init__(self, app_id, app_secret, redirect_uri):
         self.app_id = app_id
@@ -45,6 +47,8 @@ class FakeThreadsClient:
         return {"id": "post_123"}
 
     def publish_reply(self, threads_user_id, access_token, text, reply_to_id):
+        if self.fail_reply:
+            raise ThreadsApiError("reply permission denied")
         self.replies.append(
             {
                 "threads_user_id": threads_user_id,
@@ -84,6 +88,7 @@ async def test_threads_api_server_exposes_only_bridge_api(tmp_path, monkeypatch)
 async def test_threads_api_server_uses_env_settings_for_auth_and_publish(tmp_path, monkeypatch):
     FakeThreadsClient.published = []
     FakeThreadsClient.replies = []
+    FakeThreadsClient.fail_reply = False
     monkeypatch.setenv("THREADS_BRIDGE_API_KEY", "bridge-key")
     monkeypatch.setenv("THREADS_APP_ID", "env-app-id")
     monkeypatch.setenv("THREADS_APP_SECRET", "env-secret")
@@ -131,9 +136,59 @@ async def test_threads_api_server_uses_env_settings_for_auth_and_publish(tmp_pat
 
 
 @pytest.mark.anyio
+async def test_threads_api_server_records_post_when_reply_publish_fails(tmp_path, monkeypatch):
+    FakeThreadsClient.published = []
+    FakeThreadsClient.replies = []
+    FakeThreadsClient.fail_reply = True
+    monkeypatch.setenv("THREADS_BRIDGE_API_KEY", "bridge-key")
+    monkeypatch.setenv("THREADS_APP_ID", "env-app-id")
+    monkeypatch.setenv("THREADS_APP_SECRET", "env-secret")
+    monkeypatch.setenv("THREADS_REDIRECT_URI", "https://sinabro-ai.com/threads-copas/api/threads/auth/callback")
+    monkeypatch.setattr("codex_coupang_workbench.threads_api.ThreadsApiClient", FakeThreadsClient)
+
+    app = create_threads_api_app(tmp_path / "threads-api.sqlite3")
+    transport = ASGITransport(app=app)
+    headers = {"X-Threads-Bridge-Key": "bridge-key"}
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/api/threads/profiles",
+            json={"profile_key": "tesla", "display_name": "테슬라 용품"},
+            headers=headers,
+        )
+        await client.get(
+            "/api/threads/auth/callback",
+            params={"code": "oauth-code", "state": "tesla"},
+        )
+        published = await client.post(
+            "/api/threads/remote-publish",
+            json={
+                "profile_key": "tesla",
+                "product_url": "https://link.coupang.com/a/tesla",
+                "product_name": "테슬라 수납함",
+                "image_url": "https://image.example/tesla.jpg",
+                "text": "본문",
+                "comment_text": "댓글",
+            },
+            headers=headers,
+        )
+        records = await client.get("/api/threads/publish-records", headers=headers)
+
+        assert published.status_code == 400
+        assert published.json()["detail"]["threads_post_id"] == "post_123"
+        assert published.json()["detail"]["threads_reply_id"] == ""
+        assert "reply permission denied" in published.json()["detail"]["error"]
+        assert FakeThreadsClient.published[0]["image_url"] == "https://image.example/tesla.jpg"
+        assert FakeThreadsClient.replies == []
+        assert records.json()[0]["threads_post_id"] == "post_123"
+        assert records.json()[0]["threads_reply_id"] == ""
+
+
+@pytest.mark.anyio
 async def test_threads_api_server_disconnects_connected_profile(tmp_path, monkeypatch):
     FakeThreadsClient.published = []
     FakeThreadsClient.replies = []
+    FakeThreadsClient.fail_reply = False
     monkeypatch.setenv("THREADS_BRIDGE_API_KEY", "bridge-key")
     monkeypatch.setenv("THREADS_APP_ID", "env-app-id")
     monkeypatch.setenv("THREADS_APP_SECRET", "env-secret")
@@ -175,7 +230,7 @@ async def test_threads_api_server_disconnects_connected_profile(tmp_path, monkey
         assert disconnected.status_code == 200
         assert disconnected.json()["is_connected"] is False
         assert disconnected.json()["token_preview"] == ""
-        assert disconnected_profiles.json()[0]["is_connected"] is False
+        assert disconnected_profiles.json() == []
         assert published.status_code == 400
         assert published.json()["detail"] == "Threads profile is not connected"
         assert FakeThreadsClient.published == []

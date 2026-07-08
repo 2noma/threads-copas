@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import os
 from pathlib import Path
 from secrets import compare_digest
@@ -30,6 +31,7 @@ ALLOWED_MEDIA_TYPES = {
     "image/webp": ".webp",
 }
 MAX_MEDIA_BYTES = 8 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
@@ -142,7 +144,26 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     reply_to_id=post_id,
                 )
             except ThreadsApiError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from None
+                error_detail = f"Threads reply failed after post publish: post_id={post_id}; error={exc}"
+                updated_job = store.mark_threads_published(
+                    job_id=job["id"],
+                    profile_key=profile_key,
+                    threads_post_id=post_id,
+                    threads_reply_id="",
+                    published_text=f"본문:\n{text.strip()}\n\n댓글:\n{clean_comment}",
+                )
+                store.add_log(job["id"], "ERROR", error_detail)
+                logger.warning(error_detail)
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "Threads post was published, but reply publishing failed",
+                        "threads_post_id": post_id,
+                        "threads_reply_id": "",
+                        "error": str(exc),
+                        "job": updated_job,
+                    },
+                ) from None
             reply_id = str(reply.get("id", "")).strip()
         updated_job = store.mark_threads_published(
             job_id=job["id"],
