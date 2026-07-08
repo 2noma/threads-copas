@@ -128,3 +128,54 @@ async def test_threads_api_server_uses_env_settings_for_auth_and_publish(tmp_pat
         assert published.json()["threads_reply_id"] == "reply_123"
         assert FakeThreadsClient.published[0]["image_url"] == "https://image.example/tesla.jpg"
         assert records.json()[0]["product_name"] == "테슬라 수납함"
+
+
+@pytest.mark.anyio
+async def test_threads_api_server_disconnects_connected_profile(tmp_path, monkeypatch):
+    FakeThreadsClient.published = []
+    FakeThreadsClient.replies = []
+    monkeypatch.setenv("THREADS_BRIDGE_API_KEY", "bridge-key")
+    monkeypatch.setenv("THREADS_APP_ID", "env-app-id")
+    monkeypatch.setenv("THREADS_APP_SECRET", "env-secret")
+    monkeypatch.setenv("THREADS_REDIRECT_URI", "https://sinabro-ai.com/threads-copas/api/threads/auth/callback")
+    monkeypatch.setattr("codex_coupang_workbench.threads_api.ThreadsApiClient", FakeThreadsClient)
+
+    app = create_threads_api_app(tmp_path / "threads-api.sqlite3")
+    transport = ASGITransport(app=app)
+    headers = {"X-Threads-Bridge-Key": "bridge-key"}
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/api/threads/profiles",
+            json={"profile_key": "tesla", "display_name": "테슬라 용품"},
+            headers=headers,
+        )
+        await client.get(
+            "/api/threads/auth/callback",
+            params={"code": "oauth-code", "state": "tesla"},
+        )
+
+        connected_profiles = await client.get("/api/threads/profiles", headers=headers)
+        disconnected = await client.post("/api/threads/profiles/tesla/disconnect", headers=headers)
+        disconnected_profiles = await client.get("/api/threads/profiles", headers=headers)
+        published = await client.post(
+            "/api/threads/remote-publish",
+            json={
+                "profile_key": "tesla",
+                "product_url": "https://link.coupang.com/a/tesla",
+                "product_name": "테슬라 수납함",
+                "image_url": "https://image.example/tesla.jpg",
+                "text": "본문",
+                "comment_text": "댓글",
+            },
+            headers=headers,
+        )
+
+        assert connected_profiles.json()[0]["is_connected"] is True
+        assert disconnected.status_code == 200
+        assert disconnected.json()["is_connected"] is False
+        assert disconnected.json()["token_preview"] == ""
+        assert disconnected_profiles.json()[0]["is_connected"] is False
+        assert published.status_code == 400
+        assert published.json()["detail"] == "Threads profile is not connected"
+        assert FakeThreadsClient.published == []

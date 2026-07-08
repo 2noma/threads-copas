@@ -112,6 +112,10 @@ class FakeThreadsBridgeClient:
         self.calls.append({"method": "refresh_profile", "profile_key": profile_key})
         return {"profile_key": profile_key, "is_connected": True}
 
+    def disconnect_profile(self, profile_key):
+        self.calls.append({"method": "disconnect_profile", "profile_key": profile_key})
+        return {"profile_key": profile_key, "is_connected": False}
+
 
 @pytest.mark.anyio
 async def test_api_create_job_and_generate_draft(tmp_path):
@@ -244,6 +248,7 @@ async def test_threads_remote_service_delegates_profiles_auth_and_records(tmp_pa
         auth_start = await client.get("/api/threads/auth/start", params={"profile_key": "tesla"})
         import_start = await client.get("/api/threads/auth/import/start")
         records = await client.get("/api/threads/publish-records")
+        disconnected = await client.post("/api/threads/profiles/tesla/disconnect")
 
         assert profiles.status_code == 200
         assert profiles.json()[0]["display_name"] == "Tesla Remote"
@@ -251,8 +256,11 @@ async def test_threads_remote_service_delegates_profiles_auth_and_records(tmp_pa
         assert auth_start.json()["auth_url"].endswith("state=tesla")
         assert "import-current-profile" in import_start.json()["auth_url"]
         assert records.json()[0]["threads_post_id"] == "remote_post"
+        assert disconnected.status_code == 200
+        assert disconnected.json()["is_connected"] is False
         assert FakeThreadsBridgeClient.calls[0]["base_url"] == "https://sinabro-ai.com/threads-copas"
         assert FakeThreadsBridgeClient.calls[0]["api_key"] == "bridge-key"
+        assert FakeThreadsBridgeClient.calls[-1] == {"method": "disconnect_profile", "profile_key": "tesla"}
 
 
 @pytest.mark.anyio

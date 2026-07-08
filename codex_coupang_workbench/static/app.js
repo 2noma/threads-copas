@@ -122,6 +122,13 @@ async function refreshProfileToken(profileKey) {
   await refreshProfiles();
 }
 
+async function disconnectProfile(profileKey) {
+  const confirmed = window.confirm("이 Threads 프로필 연결을 해제할까요?");
+  if (!confirmed) return;
+  await api(`/api/threads/profiles/${encodeURIComponent(profileKey)}/disconnect`, { method: "POST" });
+  await refreshProfiles();
+}
+
 async function previewCoupangProduct() {
   const form = $("#threads-draft-form");
   const message = $("#coupang-preview-message");
@@ -315,7 +322,10 @@ function renderProfiles() {
               <button class="small-button" type="button" data-action="connect" data-key="${escapeAttribute(profile.profile_key)}">Connect</button>
               ${
                 profile.is_connected
-                  ? `<button class="small-button" type="button" data-action="refresh-token" data-key="${escapeAttribute(profile.profile_key)}">Refresh Token</button>`
+                  ? `
+                    <button class="small-button" type="button" data-action="refresh-token" data-key="${escapeAttribute(profile.profile_key)}">Refresh Token</button>
+                    <button class="small-button" type="button" data-action="disconnect" data-key="${escapeAttribute(profile.profile_key)}">Disconnect</button>
+                  `
                   : ""
               }
             </div>
@@ -423,6 +433,9 @@ function bindEvents() {
     }
     if (button.dataset.action === "refresh-token") {
       await refreshProfileToken(button.dataset.key);
+    }
+    if (button.dataset.action === "disconnect") {
+      await disconnectProfile(button.dataset.key);
     }
   });
   window.addEventListener("focus", () => {

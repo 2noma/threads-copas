@@ -670,6 +670,29 @@ class WorkbenchStore:
             raise RuntimeError("Threads profile could not be loaded")
         return profile
 
+    def disconnect_threads_profile(self, profile_key: str) -> dict[str, Any] | None:
+        clean_key = profile_key.strip()
+        now = utc_now()
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE threads_profiles
+                SET threads_user_id = '',
+                    username = '',
+                    access_token = '',
+                    expires_at = '',
+                    updated_at = ?
+                WHERE profile_key = ?
+                """,
+                (now, clean_key),
+            )
+            if result.rowcount == 0:
+                return None
+        profile = self.get_threads_profile(clean_key)
+        if profile is None:
+            raise RuntimeError("Threads profile could not be loaded")
+        return profile
+
     def mark_threads_published(
         self,
         job_id: str,

@@ -793,6 +793,24 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             expires_in=int(refreshed.get("expires_in") or 0),
         )
 
+    @app.post("/api/threads/profiles/{profile_key}/disconnect")
+    def disconnect_threads_profile(
+        profile_key: str,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).disconnect_profile(profile_key)
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
+        disconnected = store.disconnect_threads_profile(profile_key)
+        if disconnected is None:
+            raise HTTPException(status_code=404, detail="Threads profile not found")
+        return disconnected
+
     @app.get("/api/logs")
     def list_logs(store: WorkbenchStore = Depends(get_store)) -> list[dict[str, Any]]:
         return store.list_logs()

@@ -12,6 +12,8 @@ BridgeTransport = Callable[
     dict[str, Any] | list[dict[str, Any]],
 ]
 
+BRIDGE_USER_AGENT = "ThreadsCopasBridge/1.0 (+https://sinabro-ai.com)"
+
 
 class ThreadsBridgeError(RuntimeError):
     pass
@@ -95,6 +97,10 @@ class ThreadsBridgeClient:
         response = self._request("POST", f"/api/threads/profiles/{quote(profile_key, safe='')}/refresh")
         return _ensure_dict(response)
 
+    def disconnect_profile(self, profile_key: str) -> dict[str, Any]:
+        response = self._request("POST", f"/api/threads/profiles/{quote(profile_key, safe='')}/disconnect")
+        return _ensure_dict(response)
+
     def _request(
         self,
         method: str,
@@ -106,7 +112,10 @@ class ThreadsBridgeClient:
         url = f"{self.base_url}{path}"
         if params:
             url = f"{url}?{urlencode(params)}"
-        headers = {"Accept": "application/json"}
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": BRIDGE_USER_AGENT,
+        }
         if self.api_key:
             headers["X-Threads-Bridge-Key"] = self.api_key
         return self._transport(method, url, data=data, headers=headers)

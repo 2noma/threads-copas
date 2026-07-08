@@ -125,6 +125,20 @@ def test_threads_profile_lifecycle_and_publish_metadata(tmp_path):
     assert private_profile is not None
     assert private_profile["access_token"] == "secret-token"
 
+    disconnected = store.disconnect_threads_profile("tesla")
+    assert disconnected["profile_key"] == "tesla"
+    assert disconnected["display_name"] == "테슬라 용품"
+    assert disconnected["is_connected"] is False
+    assert disconnected["threads_user_id"] == ""
+    assert disconnected["username"] == ""
+    assert disconnected["expires_at"] == ""
+    assert disconnected["token_preview"] == ""
+    assert "access_token" not in disconnected
+
+    private_profile = store.get_threads_profile("tesla", include_token=True)
+    assert private_profile is not None
+    assert private_profile["access_token"] == ""
+
     listed = store.list_threads_profiles()
     assert listed[0]["profile_key"] == "tesla"
     assert "access_token" not in listed[0]

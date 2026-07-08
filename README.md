@@ -131,6 +131,7 @@ GET  /api/threads/auth/callback
 GET  /api/threads/publish-records
 POST /api/threads/remote-publish
 POST /api/threads/profiles/{profile_key}/refresh
+POST /api/threads/profiles/{profile_key}/disconnect
 ```
 
 로컬 화면은 기존 앱을 실행합니다.

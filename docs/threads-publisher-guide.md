@@ -114,6 +114,7 @@ GET  /api/threads/auth/callback
 GET  /api/threads/publish-records
 POST /api/threads/remote-publish
 POST /api/threads/profiles/{profile_key}/refresh
+POST /api/threads/profiles/{profile_key}/disconnect
 ```
 
 로컬 화면의 `API Settings`에는 아래처럼 저장합니다.
