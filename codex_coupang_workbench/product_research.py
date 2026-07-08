@@ -80,6 +80,35 @@ class _SearchResultParser(HTMLParser):
             self.links.append(href)
 
 
+class _ProductSearchResultParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[tuple[str, str]] = []
+        self._active_href = ""
+        self._active_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a" or self._active_href:
+            return
+        attr_map = {key.lower(): value or "" for key, value in attrs}
+        href = attr_map.get("href", "")
+        if href:
+            self._active_href = href
+            self._active_text = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "a" or not self._active_href:
+            return
+        text = _clean_text(" ".join(self._active_text))
+        self.results.append((self._active_href, text))
+        self._active_href = ""
+        self._active_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._active_href:
+            self._active_text.append(data)
+
+
 BRAND_ALIASES = {
     "로지텍": "logitech",
     "키크론": "keychron",
@@ -120,6 +149,9 @@ def fetch_best_product_context(
     official_context = fetch_official_product_context(product_name, timeout=timeout)
     if _has_enough_product_detail(official_context):
         return _merge_contexts(store_context, official_context)
+    search_context = fetch_product_search_context(product_url, timeout=timeout)
+    if search_context.page_title:
+        return _merge_contexts(store_context, search_context)
     return store_context
 
 
@@ -177,6 +209,38 @@ def parse_official_search_results(search_html: str, product_name: str) -> list[s
         if _is_official_candidate(link, product_terms):
             candidates.append(link)
     return candidates[:5]
+
+
+def fetch_product_search_context(product_url: str, timeout: float = 8.0) -> ProductContext:
+    product_ids = _extract_product_ids(product_url)
+    if not product_ids:
+        return ProductContext(source_url="product-search")
+    for search_url in _product_search_urls(product_ids):
+        context = parse_product_search_context(_fetch_text(search_url, timeout=timeout), product_ids)
+        if context.page_title:
+            return context
+    return ProductContext(source_url="product-search")
+
+
+def parse_product_search_context(search_html: str, product_ids: list[str]) -> ProductContext:
+    wanted = {product_id for product_id in product_ids if product_id}
+    if not search_html or not wanted:
+        return ProductContext(source_url="product-search")
+    parser = _ProductSearchResultParser()
+    parser.feed(search_html)
+    for raw_link, raw_title in parser.results:
+        link = _resolve_search_link(raw_link)
+        title = _clean_title(raw_title)
+        if not link or not title:
+            continue
+        if _link_matches_product_ids(link, wanted) and _looks_like_product_title(title):
+            return ProductContext(
+                source_url="product-search",
+                resolved_url=link,
+                page_title=title,
+                facts=["검색 결과에서 확인한 상품명"],
+            )
+    return ProductContext(source_url="product-search")
 
 
 def parse_product_html(
@@ -271,6 +335,36 @@ def _official_search_urls(product_name: str) -> list[str]:
     ]
 
 
+def _product_search_urls(product_ids: list[str]) -> list[str]:
+    product_id = product_ids[0] if product_ids else ""
+    if not product_id:
+        return []
+    query = quote_plus(f"{product_id} 쿠팡")
+    return [f"https://search.naver.com/search.naver?query={query}"]
+
+
+def _extract_product_ids(product_url: str) -> list[str]:
+    parsed = urlparse(product_url.strip())
+    ids: list[str] = []
+    path_parts = [part for part in parsed.path.split("/") if part]
+    for index, part in enumerate(path_parts):
+        if part == "products" and index + 1 < len(path_parts):
+            ids.append(path_parts[index + 1])
+    query = parse_qs(parsed.query)
+    for key in ("productId", "itemId", "vendorItemId"):
+        ids.extend(query.get(key, []))
+    return [item for item in _dedupe(ids) if item.isdigit()]
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for item in items:
+        clean = str(item).strip()
+        if clean and clean not in deduped:
+            deduped.append(clean)
+    return deduped
+
+
 def _official_direct_urls(product_name: str) -> list[str]:
     lowered = product_name.lower()
     urls: list[str] = []
@@ -337,6 +431,40 @@ def _product_search_terms(product_name: str) -> list[str]:
         if len(cleaned) >= 3 and cleaned not in terms:
             terms.append(cleaned)
     return terms
+
+
+def _looks_like_product_title(title: str) -> bool:
+    lowered = title.lower()
+    if not title or len(title) < 4:
+        return False
+    return not any(
+        marker in lowered
+        for marker in (
+            "naver",
+            "keep",
+            "메뉴",
+            "바로가기",
+            "어학사전",
+            "사전",
+            "제품후기",
+            "review",
+            "블로그",
+            "www.",
+            ".com",
+            "›",
+        )
+    )
+
+
+def _link_matches_product_ids(link: str, product_ids: set[str]) -> bool:
+    parsed = urlparse(link)
+    if any(product_id in parsed.path for product_id in product_ids):
+        return True
+    query = parse_qs(parsed.query)
+    for key in ("productId", "itemId", "vendorItemId"):
+        if any(value in product_ids for value in query.get(key, [])):
+            return True
+    return False
 
 
 def _has_enough_product_detail(context: ProductContext) -> bool:

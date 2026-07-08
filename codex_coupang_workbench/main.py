@@ -12,18 +12,21 @@ from fastapi.staticfiles import StaticFiles
 
 from .coupang_partners import (
     CoupangPartnerProduct,
+    CoupangPartnersClient,
     CoupangPartnersError,
     extract_coupang_ids,
     fetch_partner_product_context,
+    resolve_coupang_redirect,
 )
 from .codex_threads import CodexThreadsError, DEFAULT_CODEX_MODEL, generate_codex_threads_post
 from .naver import publish_handoff_message
 from .product_research import fetch_best_product_context
 from .schemas import (
+    CoupangDeeplinkPayload,
+    CoupangProductPreviewPayload,
     GeneratedImagePayload,
     JobCreatePayload,
     MediaCandidatePayload,
-    CoupangProductPreviewPayload,
     PublishHandoff,
     SettingsPayload,
     ThreadsDraftPayload,
@@ -86,19 +89,50 @@ def fetch_coupang_partner_product(
     product_url: str,
     settings: dict[str, str],
     product_keyword: str = "",
+    sub_id: str = "",
 ) -> tuple[CoupangPartnerProduct, str]:
     access_key = settings.get("coupang_access_key", "").strip()
     secret_key = settings.get("coupang_secret_key", "").strip()
     if not access_key or not secret_key:
         raise CoupangPartnersError("쿠팡 파트너스 API 키를 저장한 뒤 다시 시도해 주세요.")
+    selected_sub_id = sub_id.strip() or settings.get("coupang_sub_id", "")
     partner_product, resolved_url = fetch_partner_product_context(
         product_url,
         access_key=access_key,
         secret_key=secret_key,
-        sub_id=settings.get("coupang_sub_id", ""),
+        sub_id=selected_sub_id,
         product_keyword=product_keyword,
     )
     return partner_product, resolved_url
+
+
+def create_coupang_deeplink(product_url: str, settings: dict[str, str], sub_id: str = "") -> dict[str, str]:
+    access_key = settings.get("coupang_access_key", "").strip()
+    secret_key = settings.get("coupang_secret_key", "").strip()
+    if not access_key or not secret_key:
+        raise CoupangPartnersError("쿠팡 파트너스 API 키를 저장한 뒤 다시 시도해 주세요.")
+    clean_url = product_url.strip()
+    if not clean_url:
+        raise CoupangPartnersError("쿠팡 URL을 입력해 주세요.")
+    selected_sub_id = sub_id.strip() or settings.get("coupang_sub_id", "")
+    client = CoupangPartnersClient(
+        access_key,
+        secret_key,
+        sub_id=selected_sub_id,
+    )
+    resolved_url = resolve_coupang_redirect(clean_url) or clean_url
+    partner_url = client.create_deeplink(resolved_url)
+    if not partner_url and resolved_url != clean_url:
+        partner_url = client.create_deeplink(clean_url)
+    if not partner_url:
+        raise CoupangPartnersError("쿠팡 파트너스 API에서 딥링크를 만들지 못했습니다.")
+    return {
+        "partner_url": partner_url,
+        "product_url": resolved_url,
+        "resolved_url": resolved_url,
+        "original_url": clean_url,
+        "sub_id": selected_sub_id.strip(),
+    }
 
 
 def resolve_coupang_partner_product(
@@ -116,11 +150,13 @@ def product_preview_response(
     *,
     original_url: str,
     resolved_url: str,
+    fallback_product_name: str = "",
 ) -> dict[str, Any]:
     product_ids = extract_coupang_ids(resolved_url) + extract_coupang_ids(original_url)
     product_id = product.product_id or (product_ids[0] if product_ids else "")
+    product_name = product.product_name or fallback_product_name.strip()
     return {
-        "product_name": product.product_name,
+        "product_name": product_name,
         "product_id": product_id,
         "item_id": product_ids[1] if len(product_ids) > 1 else "",
         "image_url": product.image_url,
@@ -129,8 +165,28 @@ def product_preview_response(
         "resolved_url": resolved_url,
         "original_url": original_url,
         "facts": list(product.facts),
-        "needs_product_name": not bool(product.product_name),
+        "needs_product_name": not bool(product_name),
     }
+
+
+def enrich_partner_product_with_local_context(
+    product: CoupangPartnerProduct,
+    *,
+    original_url: str,
+    resolved_url: str,
+    product_name: str = "",
+) -> CoupangPartnerProduct:
+    if product.product_name and product.image_url and product.facts:
+        return product
+    context = fetch_best_product_context(resolved_url or original_url, product_name or product.product_name)
+    return CoupangPartnerProduct(
+        product_name=product.product_name or context.page_title,
+        product_url=product.product_url or resolved_url or context.resolved_url,
+        partner_url=product.partner_url,
+        image_url=product.image_url or context.image_url,
+        facts=product.facts or tuple(context.facts or ()),
+        product_id=product.product_id,
+    )
 
 
 def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
@@ -220,16 +276,35 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 product_url,
                 store.get_settings(),
                 product_keyword=product_name,
+                sub_id=payload.sub_id,
             )
         except CoupangPartnersError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         if not product.product_name and not product.partner_url:
             raise HTTPException(status_code=400, detail="쿠팡 파트너스 API에서 상품 정보를 찾지 못했습니다.") from None
+        if product.partner_url and not product.product_name:
+            product = enrich_partner_product_with_local_context(
+                product,
+                original_url=product_url,
+                resolved_url=resolved_url or product_url,
+                product_name=product_name,
+            )
         return product_preview_response(
             product,
             original_url=product_url,
             resolved_url=resolved_url or product_url,
+            fallback_product_name=product_name if product.partner_url else "",
         )
+
+    @app.post("/api/coupang/deeplink")
+    def create_coupang_deeplink_endpoint(
+        payload: CoupangDeeplinkPayload,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, str]:
+        try:
+            return create_coupang_deeplink(payload.product_url, store.get_settings(), sub_id=payload.sub_id)
+        except CoupangPartnersError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
 
     @app.post("/api/jobs")
     def create_job(
@@ -541,7 +616,14 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     product_url,
                     settings,
                     product_keyword=product_name,
+                    sub_id=payload.coupang_channel_id,
                 )
+                if partner_product.partner_url and not partner_product.product_name and not product_name:
+                    partner_product = enrich_partner_product_with_local_context(
+                        partner_product,
+                        original_url=product_url,
+                        resolved_url=resolved_url or product_url,
+                    )
                 if partner_product.product_name:
                     product_context = partner_product.to_product_context(
                         source_url=product_url,
@@ -550,6 +632,20 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     product_name = partner_product.product_name
                     image_url = image_url or partner_product.image_url
                     partner_url = partner_url or partner_product.partner_url
+                elif product_name and partner_product.partner_url:
+                    partner_url = partner_url or partner_product.partner_url
+                    product_context = CoupangPartnerProduct(
+                        product_name=product_name,
+                        product_url=resolved_url or product_url,
+                        partner_url=partner_url,
+                        image_url=partner_product.image_url,
+                        facts=partner_product.facts,
+                        product_id=partner_product.product_id,
+                    ).to_product_context(
+                        source_url=product_url,
+                        resolved_url=resolved_url or product_url,
+                    )
+                    image_url = image_url or partner_product.image_url
                 else:
                     api_error = "상품명으로 쿠팡 API에서 정확한 상품을 확인하지 못했습니다."
             except CoupangPartnersError as exc:

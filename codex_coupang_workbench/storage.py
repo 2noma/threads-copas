@@ -583,7 +583,13 @@ class WorkbenchStore:
     def list_threads_profiles(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM threads_profiles ORDER BY display_name, profile_key"
+                """
+                SELECT *
+                FROM threads_profiles
+                WHERE threads_user_id != ''
+                  AND access_token != ''
+                ORDER BY display_name, profile_key
+                """
             ).fetchall()
         return [self._row_to_threads_profile(row) for row in rows]
 

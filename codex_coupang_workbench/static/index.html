@@ -61,6 +61,12 @@
                 Coupang Sub ID
                 <input name="coupang_sub_id" autocomplete="off" placeholder="sub ID" />
               </label>
+              <label class="wide">
+                Coupang Channel IDs
+                <textarea name="coupang_channel_ids" rows="3" autocomplete="off">bonggushop
+sinabroai
+sinabroinfo</textarea>
+              </label>
               <label>
                 Codex Model
                 <input name="codex_model" autocomplete="off" placeholder="gpt-5.5" />
@@ -96,6 +102,10 @@
               발행 프로필
               <select name="profile_key" id="threads-profile-select"></select>
             </label>
+            <label>
+              쿠팡 채널ID
+              <select name="coupang_channel_id" id="coupang-channel-select"></select>
+            </label>
             <label class="wide">
               쿠팡 URL
               <div class="input-action-row">
@@ -105,13 +115,16 @@
             </label>
             <label class="wide">
               댓글 딥링크 URL
-              <input name="partner_url" autocomplete="off" placeholder="https://link.coupang.com/a/... 직접 입력하면 댓글에 이 링크를 사용합니다." />
+              <div class="input-action-row">
+                <input name="partner_url" autocomplete="off" placeholder="https://link.coupang.com/a/... 직접 입력하면 댓글에 이 링크를 사용합니다." />
+                <button class="small-button" id="coupang-deeplink-button" type="button">딥링크 만들기</button>
+              </div>
+            </label>
+            <label class="wide" id="product-name-fallback" hidden>
+              상품명 직접 입력
+              <input name="product_name" autocomplete="off" placeholder="자동 확인이 안 되면 상품명을 입력하고 Generate Thread를 누르세요." />
             </label>
             <div class="wide product-preview" id="coupang-product-preview" hidden></div>
-            <label class="wide" id="product-name-fallback" hidden>
-              상품명 보정
-              <input name="product_name" autocomplete="off" placeholder="상품명을 입력하면 파트너스 링크로 글을 생성합니다." />
-            </label>
             <div class="wide form-actions">
               <button class="primary-button" type="submit">Generate Thread</button>
               <span id="coupang-preview-message" class="inline-message"></span>
@@ -159,6 +172,6 @@
       </main>
     </div>
 
-    <script src="static/app.js?v=20260705-direct-deeplink-image"></script>
+    <script src="static/app.js?v=20260708-manual-product-name"></script>
   </body>
 </html>

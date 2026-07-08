@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class SettingsPayload(BaseModel):
     naver_blog_id: str = ""
     coupang_sub_id: str = ""
+    coupang_channel_ids: str = ""
     writer_persona: str = ""
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
@@ -57,6 +58,7 @@ class ThreadsDraftPayload(BaseModel):
     product_url: str = Field(min_length=1)
     partner_url: str = ""
     profile_key: str = ""
+    coupang_channel_id: str = ""
     product_name: str = ""
     image_url: str = ""
     memo: str = ""
@@ -65,6 +67,12 @@ class ThreadsDraftPayload(BaseModel):
 class CoupangProductPreviewPayload(BaseModel):
     product_url: str = Field(min_length=1)
     product_name: str = ""
+    sub_id: str = ""
+
+
+class CoupangDeeplinkPayload(BaseModel):
+    product_url: str = Field(min_length=1)
+    sub_id: str = ""
 
 
 class ThreadsPublishPayload(BaseModel):

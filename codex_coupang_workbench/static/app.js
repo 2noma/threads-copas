@@ -3,10 +3,12 @@ const state = {
   records: [],
   draftJobId: "",
   productPreview: null,
+  channelIds: [],
 };
 
 const $ = (selector) => document.querySelector(selector);
 const APP_BASE_PATH = window.location.pathname.startsWith("/threads-copas") ? "/threads-copas" : "";
+const DEFAULT_COUPANG_CHANNEL_IDS = ["bonggushop", "sinabroai", "sinabroinfo"];
 
 async function api(path, options = {}) {
   const url = path.startsWith("/") ? `${APP_BASE_PATH}${path}` : path;
@@ -47,6 +49,7 @@ async function checkHealth() {
 async function loadSettings() {
   const settings = await api("/api/settings");
   applySettingsToForm(settings, $("#settings-form"));
+  syncCoupangChannelIds();
 }
 
 async function saveSettings(event) {
@@ -59,6 +62,7 @@ async function saveSettings(event) {
     body: JSON.stringify(formToObject(form)),
   });
   applySettingsToForm(settings, form);
+  syncCoupangChannelIds();
   message.textContent = "saved";
   clearMessage(message);
 }
@@ -69,6 +73,28 @@ function applySettingsToForm(settings, form) {
       form.elements[key].value = value;
     }
   }
+}
+
+function parseChannelIds(value) {
+  const channelIds = String(value ?? "")
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set(channelIds)];
+}
+
+function syncCoupangChannelIds() {
+  const field = $("#settings-form").elements.coupang_channel_ids;
+  if (!field.value.trim()) {
+    field.value = DEFAULT_COUPANG_CHANNEL_IDS.join("\n");
+  }
+  state.channelIds = parseChannelIds(field.value);
+  renderCoupangChannelOptions();
+}
+
+function selectedCoupangChannelId() {
+  const select = $("#coupang-channel-select");
+  return select ? select.value.trim() : "";
 }
 
 async function connectProfile(profileKey) {
@@ -149,6 +175,7 @@ async function previewCoupangProduct() {
       body: JSON.stringify({
         product_url: productUrl,
         product_name: form.elements.product_name.value.trim(),
+        sub_id: selectedCoupangChannelId(),
       }),
     });
     state.productPreview = preview;
@@ -158,9 +185,9 @@ async function previewCoupangProduct() {
       form.elements.product_name.value = preview.product_name;
     }
     renderProductPreview();
-    $("#selected-product-label").textContent = preview.product_name || "selected product";
+    $("#selected-product-label").textContent = preview.product_name || form.elements.product_name.value.trim() || "상품명 직접 입력 필요";
     if (preview.needs_product_name) {
-      message.textContent = "상품명을 입력한 뒤 다시 확인하세요.";
+      message.textContent = "딥링크 생성 완료. 상품명을 직접 입력하면 글을 만들 수 있습니다.";
     } else {
       message.textContent = "상품 확인 완료";
       clearMessage(message);
@@ -173,18 +200,64 @@ async function previewCoupangProduct() {
   }
 }
 
+async function createCoupangDeeplink() {
+  const form = $("#threads-draft-form");
+  const message = $("#coupang-preview-message");
+  const productUrl = form.elements.product_url.value.trim();
+  if (!productUrl) {
+    message.textContent = "쿠팡 URL을 입력하세요.";
+    return;
+  }
+  setBusy(true);
+  try {
+    message.textContent = "딥링크 생성 중...";
+    const deeplink = await api("/api/coupang/deeplink", {
+      method: "POST",
+      body: JSON.stringify({
+        product_url: productUrl,
+        sub_id: selectedCoupangChannelId(),
+      }),
+    });
+    form.elements.partner_url.value = deeplink.partner_url || "";
+    if (state.productPreview) {
+      state.productPreview = {
+        ...state.productPreview,
+        partner_url: deeplink.partner_url || state.productPreview.partner_url,
+        product_url: deeplink.product_url || state.productPreview.product_url,
+        resolved_url: deeplink.resolved_url || state.productPreview.resolved_url,
+        original_url: deeplink.original_url || state.productPreview.original_url,
+      };
+      renderProductPreview();
+    }
+    message.textContent = "딥링크 생성 완료";
+    clearMessage(message);
+  } catch (error) {
+    console.error(error);
+    message.textContent = error.message || "딥링크를 만들지 못했습니다.";
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function generateDraft(event) {
   event.preventDefault();
   const message = $("#threads-draft-message");
   const form = event.currentTarget;
-  if (!state.productPreview || state.productPreview.needs_product_name) {
+  const productName = form.elements.product_name.value.trim();
+  const partnerUrl = form.elements.partner_url.value.trim();
+  if (!state.productPreview) {
     message.textContent = "먼저 상품 확인을 완료하세요.";
     if (!$("#product-name-fallback").hidden) {
       form.elements.product_name.focus();
     }
     return;
   }
-  if (!form.elements.product_name.value.trim()) {
+  if (state.productPreview.needs_product_name && (!productName || !partnerUrl)) {
+    message.textContent = "상품명을 입력하면 생성할 수 있습니다.";
+    form.elements.product_name.focus();
+    return;
+  }
+  if (!productName) {
     message.textContent = "확인된 상품명이 없습니다.";
     form.elements.product_name.focus();
     return;
@@ -267,34 +340,38 @@ function renderProductPreview() {
   const container = $("#coupang-product-preview");
   const preview = state.productPreview;
   const fallback = $("#product-name-fallback");
+  const form = $("#threads-draft-form");
   if (!preview) {
     container.hidden = true;
     container.innerHTML = "";
     fallback.hidden = true;
-    $("#threads-draft-form").elements.image_url.value = "";
+    form.elements.image_url.value = "";
     return;
   }
   const facts = Array.isArray(preview.facts) ? preview.facts.filter(Boolean) : [];
-  const partnerUrl = $("#threads-draft-form").elements.partner_url.value.trim() || preview.partner_url;
+  const partnerUrl = form.elements.partner_url.value.trim() || preview.partner_url;
+  const manualProductName = form.elements.product_name.value.trim();
+  const displayProductName = preview.product_name || manualProductName || "상품명 직접 입력 필요";
   fallback.hidden = !preview.needs_product_name;
+  $("#selected-product-label").textContent = displayProductName;
   container.hidden = false;
   container.innerHTML = `
     <div class="product-preview-thumb">
       ${
         preview.image_url
-          ? `<img src="${escapeAttribute(preview.image_url)}" alt="${escapeAttribute(preview.product_name || "쿠팡 상품")}" />`
+          ? `<img src="${escapeAttribute(preview.image_url)}" alt="${escapeAttribute(displayProductName || "쿠팡 상품")}" />`
           : '<div class="product-preview-placeholder">이미지 없음</div>'
       }
     </div>
     <div class="product-preview-info">
-      <strong>${escapeHtml(preview.product_name || "상품명 자동 확인 필요")}</strong>
+      <strong>${escapeHtml(displayProductName)}</strong>
       ${preview.product_id ? `<span class="link-text">상품 ID: ${escapeHtml(preview.product_id)}</span>` : ""}
       ${preview.item_id ? `<span class="link-text">Item ID: ${escapeHtml(preview.item_id)}</span>` : ""}
       ${facts.length ? `<span class="link-text">${facts.map(escapeHtml).join(" · ")}</span>` : ""}
       ${partnerUrl ? `<span class="link-text">${escapeHtml(partnerUrl)}</span>` : ""}
       ${
         preview.needs_product_name
-          ? '<span class="link-text">상품명을 입력하고 확인을 다시 누르면 쿠팡 검색 API로 상품 정보를 확인합니다.</span>'
+          ? '<span class="link-text">딥링크는 생성됐습니다. 상품명을 직접 입력하면 바로 글을 만들 수 있습니다.</span>'
           : ""
       }
     </div>
@@ -355,6 +432,24 @@ function renderProfileOptions() {
   }
 }
 
+function renderCoupangChannelOptions() {
+  const select = $("#coupang-channel-select");
+  if (!select) return;
+  const current = select.value;
+  if (state.channelIds.length === 0) {
+    select.innerHTML = '<option value="">기본 Sub ID</option>';
+    return;
+  }
+  select.innerHTML = state.channelIds
+    .map((channelId) => `<option value="${escapeAttribute(channelId)}">${escapeHtml(channelId)}</option>`)
+    .join("");
+  if (current && state.channelIds.includes(current)) {
+    select.value = current;
+  } else {
+    select.value = state.channelIds[0];
+  }
+}
+
 function renderRecords() {
   $("#record-count").textContent = `${state.records.length} records`;
   const body = $("#records-body");
@@ -411,18 +506,24 @@ function escapeAttribute(value) {
 
 function bindEvents() {
   $("#settings-form").addEventListener("submit", saveSettings);
+  $("#settings-form").elements.coupang_channel_ids.addEventListener("input", syncCoupangChannelIds);
   $("#threads-import-button").addEventListener("click", importCurrentProfile);
   $("#coupang-preview-button").addEventListener("click", previewCoupangProduct);
-  $("#threads-draft-form").elements.product_url.addEventListener("input", () => {
+  $("#coupang-deeplink-button").addEventListener("click", createCoupangDeeplink);
+  const draftForm = $("#threads-draft-form");
+  draftForm.elements.product_url.addEventListener("input", () => {
     state.productPreview = null;
     state.draftJobId = "";
     $("#selected-product-label").textContent = "no product";
     $("#product-name-fallback").hidden = true;
-    $("#threads-draft-form").elements.product_name.value = "";
-    $("#threads-draft-form").elements.image_url.value = "";
+    draftForm.elements.product_name.value = "";
+    draftForm.elements.image_url.value = "";
+    draftForm.elements.partner_url.value = "";
     renderProductPreview();
   });
-  $("#threads-draft-form").addEventListener("submit", generateDraft);
+  draftForm.elements.product_name.addEventListener("input", renderProductPreview);
+  draftForm.elements.partner_url.addEventListener("input", renderProductPreview);
+  draftForm.addEventListener("submit", generateDraft);
   $("#threads-publish-button").addEventListener("click", publishDraft);
   $("#refresh-button").addEventListener("click", refreshAll);
   $("#threads-profiles-list").addEventListener("click", async (event) => {
