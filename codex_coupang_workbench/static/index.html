@@ -38,20 +38,16 @@
           <section class="panel" id="settings">
             <div class="panel-header">
               <h2>API Settings</h2>
-              <span>local only</span>
+              <span>local frontend</span>
             </div>
             <form id="settings-form" class="form-grid">
-              <label>
-                Threads App ID
-                <input name="threads_app_id" autocomplete="off" placeholder="Meta Threads App ID" />
-              </label>
-              <label>
-                Threads App Secret
-                <input name="threads_app_secret" type="password" autocomplete="new-password" placeholder="Meta Threads App Secret" data-secret-field />
+              <label class="wide">
+                Threads Service URL
+                <input name="threads_service_url" autocomplete="off" placeholder="https://sinabro-ai.com/threads-copas" />
               </label>
               <label class="wide">
-                Redirect URI
-                <input name="threads_redirect_uri" autocomplete="off" placeholder="https://sinabro-ai.com/threads-copas/api/threads/auth/callback" />
+                Threads Service API Key
+                <input name="threads_service_api_key" type="password" autocomplete="new-password" placeholder="AWS bridge API key" data-secret-field />
               </label>
               <label>
                 Coupang Access Key
@@ -64,10 +60,6 @@
               <label>
                 Coupang Sub ID
                 <input name="coupang_sub_id" autocomplete="off" placeholder="sub ID" />
-              </label>
-              <label class="wide">
-                Coupang Proxy URL
-                <input name="coupang_proxy_url" type="password" autocomplete="new-password" placeholder="http://user:pass@proxy-host:port" data-secret-field />
               </label>
               <label>
                 Codex Model

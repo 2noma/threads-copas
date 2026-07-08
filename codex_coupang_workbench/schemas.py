@@ -9,11 +9,12 @@ class SettingsPayload(BaseModel):
     writer_persona: str = ""
     coupang_access_key: str = ""
     coupang_secret_key: str = ""
-    coupang_proxy_url: str = ""
     codex_model: str = ""
     threads_app_id: str = ""
     threads_app_secret: str = ""
     threads_redirect_uri: str = ""
+    threads_service_url: str = ""
+    threads_service_api_key: str = ""
 
 
 class JobCreatePayload(BaseModel):
@@ -69,5 +70,14 @@ class CoupangProductPreviewPayload(BaseModel):
 class ThreadsPublishPayload(BaseModel):
     profile_key: str = Field(min_length=1)
     job_id: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+    comment_text: str = ""
+
+
+class ThreadsRemotePublishPayload(BaseModel):
+    profile_key: str = Field(min_length=1)
+    product_url: str = Field(min_length=1)
+    product_name: str = Field(min_length=1)
+    image_url: str = ""
     text: str = Field(min_length=1)
     comment_text: str = ""

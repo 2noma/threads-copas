@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlencode, urlparse
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from .product_research import ProductContext
 
@@ -115,14 +115,13 @@ def fetch_partner_product_context(
     secret_key: str,
     sub_id: str = "",
     product_keyword: str = "",
-    proxy_url: str = "",
     transport: JsonTransport | None = None,
 ) -> tuple[CoupangPartnerProduct, str]:
     clean_url = product_url.strip()
     if not clean_url:
         return CoupangPartnerProduct(), ""
     client = CoupangPartnersClient(access_key, secret_key, sub_id=sub_id, transport=transport)
-    resolved_url = resolve_coupang_redirect(clean_url, proxy_url=proxy_url) or clean_url
+    resolved_url = resolve_coupang_redirect(clean_url) or clean_url
     partner_url = client.create_deeplink(resolved_url) or client.create_deeplink(clean_url)
     product_ids = extract_coupang_ids(resolved_url) + extract_coupang_ids(clean_url)
     products: list[dict[str, Any]] = []
@@ -139,7 +138,7 @@ def fetch_partner_product_context(
     return _product_from_api(selected, partner_url=partner_url), resolved_url
 
 
-def resolve_coupang_redirect(url: str, timeout: float = 8.0, proxy_url: str = "") -> str:
+def resolve_coupang_redirect(url: str, timeout: float = 8.0) -> str:
     request = Request(
         url.strip(),
         headers={
@@ -150,7 +149,7 @@ def resolve_coupang_redirect(url: str, timeout: float = 8.0, proxy_url: str = ""
             "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.6",
         },
     )
-    opener = _build_proxy_opener(proxy_url, _NoRedirectHandler)
+    opener = build_opener(_NoRedirectHandler)
     try:
         response = opener.open(request, timeout=timeout)
     except HTTPError as exc:
@@ -261,18 +260,3 @@ def _dedupe(items: list[str]) -> list[str]:
 class _NoRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         return None
-
-
-def _build_proxy_opener(proxy_url: str, *handlers: Any):
-    clean_proxy_url = proxy_url.strip()
-    if not clean_proxy_url:
-        return build_opener(*handlers)
-    return build_opener(
-        ProxyHandler(
-            {
-                "http": clean_proxy_url,
-                "https": clean_proxy_url,
-            }
-        ),
-        *handlers,
-    )

@@ -70,6 +70,49 @@ class FakeThreadsClient:
         return {"id": "reply_123"}
 
 
+class FakeThreadsBridgeClient:
+    calls = []
+
+    def __init__(self, base_url, *, api_key=""):
+        self.base_url = base_url
+        self.api_key = api_key
+
+    def list_profiles(self):
+        self.calls.append({"method": "list_profiles", "base_url": self.base_url, "api_key": self.api_key})
+        return [{"profile_key": "tesla", "display_name": "Tesla Remote", "is_connected": True}]
+
+    def list_publish_records(self):
+        self.calls.append({"method": "list_publish_records"})
+        return [{"job_id": "remote-job", "threads_post_id": "remote_post"}]
+
+    def upsert_profile(self, profile_key, display_name, notes=""):
+        self.calls.append(
+            {
+                "method": "upsert_profile",
+                "profile_key": profile_key,
+                "display_name": display_name,
+                "notes": notes,
+            }
+        )
+        return {"profile_key": profile_key, "display_name": display_name, "is_connected": False}
+
+    def start_auth(self, profile_key):
+        self.calls.append({"method": "start_auth", "profile_key": profile_key})
+        return {"auth_url": f"https://threads.net/oauth/authorize?state={profile_key}"}
+
+    def start_import(self):
+        self.calls.append({"method": "start_import"})
+        return {"auth_url": "https://threads.net/oauth/authorize?state=import-current-profile:remote"}
+
+    def publish(self, **kwargs):
+        self.calls.append({"method": "publish", **kwargs})
+        return {"threads_post_id": "remote_post", "threads_reply_id": "remote_reply", "job": {"id": "remote-job"}}
+
+    def refresh_profile(self, profile_key):
+        self.calls.append({"method": "refresh_profile", "profile_key": profile_key})
+        return {"profile_key": profile_key, "is_connected": True}
+
+
 @pytest.mark.anyio
 async def test_api_create_job_and_generate_draft(tmp_path):
     app = create_app(tmp_path / "api.sqlite3")
@@ -115,6 +158,22 @@ async def test_api_create_job_and_generate_draft(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_local_frontend_only_shows_local_service_settings(tmp_path):
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/")
+
+        assert response.status_code == 200
+        assert "Threads Service URL" in response.text
+        assert "Threads Service API Key" in response.text
+        assert "Threads App ID" not in response.text
+        assert "Threads App Secret" not in response.text
+        assert "Redirect URI" not in response.text
+
+
+@pytest.mark.anyio
 async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
     app = create_app(tmp_path / "api.sqlite3")
     transport = ASGITransport(app=app)
@@ -126,15 +185,17 @@ async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
                 "threads_app_id": "app-id",
                 "threads_app_secret": "super-secret",
                 "threads_redirect_uri": "http://test/callback",
+                "threads_service_url": "https://sinabro-ai.com/threads-copas",
+                "threads_service_api_key": "bridge-secret",
                 "coupang_secret_key": "coupang-secret",
-                "coupang_proxy_url": "http://proxy-user:proxy-pass@proxy.example:8080",
                 "codex_model": "gpt-5.5",
             },
         )
         assert first.status_code == 200
         assert first.json()["threads_app_secret"] == "********"
+        assert first.json()["threads_service_api_key"] == "********"
         assert first.json()["coupang_secret_key"] == "********"
-        assert first.json()["coupang_proxy_url"] == "********"
+        assert first.json()["threads_service_url"] == "https://sinabro-ai.com/threads-copas"
         assert first.json()["codex_model"] == "gpt-5.5"
 
         second = await client.put(
@@ -149,12 +210,161 @@ async def test_api_settings_redacts_and_preserves_secrets(tmp_path):
 
         settings = await client.get("/api/settings")
         assert settings.json()["threads_app_secret"] == "********"
+        assert settings.json()["threads_service_api_key"] == "********"
         assert settings.json()["coupang_secret_key"] == "********"
-        assert settings.json()["coupang_proxy_url"] == "********"
+        assert settings.json()["threads_service_url"] == "https://sinabro-ai.com/threads-copas"
         assert settings.json()["codex_model"] == "gpt-5.5"
 
+        await client.put("/api/settings", json={"threads_service_url": ""})
         import_start = await client.get("/api/threads/auth/import/start")
         assert import_start.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_threads_remote_service_delegates_profiles_auth_and_records(tmp_path, monkeypatch):
+    FakeThreadsBridgeClient.calls = []
+    monkeypatch.setattr("codex_coupang_workbench.main.ThreadsBridgeClient", FakeThreadsBridgeClient)
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/settings",
+            json={
+                "threads_service_url": "https://sinabro-ai.com/threads-copas/",
+                "threads_service_api_key": "bridge-key",
+            },
+        )
+
+        profiles = await client.get("/api/threads/profiles")
+        created = await client.post(
+            "/api/threads/profiles",
+            json={"profile_key": "tesla", "display_name": "Tesla Remote", "notes": "remote"},
+        )
+        auth_start = await client.get("/api/threads/auth/start", params={"profile_key": "tesla"})
+        import_start = await client.get("/api/threads/auth/import/start")
+        records = await client.get("/api/threads/publish-records")
+
+        assert profiles.status_code == 200
+        assert profiles.json()[0]["display_name"] == "Tesla Remote"
+        assert created.json()["profile_key"] == "tesla"
+        assert auth_start.json()["auth_url"].endswith("state=tesla")
+        assert "import-current-profile" in import_start.json()["auth_url"]
+        assert records.json()[0]["threads_post_id"] == "remote_post"
+        assert FakeThreadsBridgeClient.calls[0]["base_url"] == "https://sinabro-ai.com/threads-copas"
+        assert FakeThreadsBridgeClient.calls[0]["api_key"] == "bridge-key"
+
+
+@pytest.mark.anyio
+async def test_threads_remote_service_publish_uses_local_job_and_marks_local_record(tmp_path, monkeypatch):
+    FakeThreadsBridgeClient.calls = []
+    monkeypatch.setattr("codex_coupang_workbench.main.ThreadsBridgeClient", FakeThreadsBridgeClient)
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/settings",
+            json={
+                "threads_service_url": "https://sinabro-ai.com/threads-copas",
+                "threads_service_api_key": "bridge-key",
+            },
+        )
+        job = (
+            await client.post(
+                "/api/jobs",
+                json={
+                    "product_url": "https://link.coupang.com/a/tesla",
+                    "product_name": "테슬라 수납함",
+                    "image_url": "https://image.example/tesla.jpg",
+                },
+            )
+        ).json()
+
+        published = await client.post(
+            "/api/threads/publish",
+            json={
+                "profile_key": "tesla",
+                "job_id": job["id"],
+                "text": "본문",
+                "comment_text": "댓글",
+            },
+        )
+
+        assert published.status_code == 200
+        payload = published.json()
+        assert payload["threads_post_id"] == "remote_post"
+        assert payload["threads_reply_id"] == "remote_reply"
+        assert payload["job"]["status"] == "THREADS_PUBLISHED"
+        assert payload["job"]["threads_profile_key"] == "tesla"
+        publish_call = [call for call in FakeThreadsBridgeClient.calls if call["method"] == "publish"][0]
+        assert publish_call["product_name"] == "테슬라 수납함"
+        assert publish_call["image_url"] == "https://image.example/tesla.jpg"
+        assert publish_call["text"] == "본문"
+
+
+@pytest.mark.anyio
+async def test_threads_bridge_api_key_protects_aws_threads_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setenv("THREADS_BRIDGE_API_KEY", "bridge-key")
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        blocked = await client.get("/api/threads/profiles")
+        allowed = await client.get("/api/threads/profiles", headers={"X-Threads-Bridge-Key": "bridge-key"})
+
+        assert blocked.status_code == 401
+        assert allowed.status_code == 200
+        assert allowed.json() == []
+
+
+@pytest.mark.anyio
+async def test_threads_remote_publish_creates_aws_record_and_publishes(tmp_path, monkeypatch):
+    FakeThreadsClient.published = []
+    FakeThreadsClient.replies = []
+    monkeypatch.setenv("THREADS_BRIDGE_API_KEY", "bridge-key")
+    monkeypatch.setattr("codex_coupang_workbench.main.ThreadsApiClient", FakeThreadsClient)
+    app = create_app(tmp_path / "api.sqlite3")
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.put(
+            "/api/settings",
+            json={
+                "threads_app_id": "app-id",
+                "threads_app_secret": "secret",
+                "threads_redirect_uri": "https://sinabro-ai.com/threads-copas/api/threads/auth/callback",
+            },
+        )
+        await client.post(
+            "/api/threads/profiles",
+            json={"profile_key": "tesla", "display_name": "테슬라 용품"},
+            headers={"X-Threads-Bridge-Key": "bridge-key"},
+        )
+        await client.get(
+            "/api/threads/auth/callback",
+            params={"code": "oauth-code", "state": "tesla"},
+        )
+
+        published = await client.post(
+            "/api/threads/remote-publish",
+            json={
+                "profile_key": "tesla",
+                "product_url": "https://link.coupang.com/a/tesla",
+                "product_name": "테슬라 수납함",
+                "image_url": "https://image.example/tesla.jpg",
+                "text": "본문",
+                "comment_text": "댓글",
+            },
+            headers={"X-Threads-Bridge-Key": "bridge-key"},
+        )
+
+        assert published.status_code == 200
+        assert published.json()["threads_post_id"] == "post_123"
+        assert FakeThreadsClient.published[0]["media_type"] == "IMAGE"
+        assert FakeThreadsClient.published[0]["image_url"] == "https://image.example/tesla.jpg"
+        records = await client.get("/api/threads/publish-records", headers={"X-Threads-Bridge-Key": "bridge-key"})
+        assert records.json()[0]["product_name"] == "테슬라 수납함"
 
 
 @pytest.mark.anyio
@@ -163,7 +373,7 @@ async def test_threads_draft_prefers_codex_auth_generation(tmp_path, monkeypatch
 
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name, proxy_url="": ProductContext(
+        lambda url, product_name: ProductContext(
             source_url=url,
             resolved_url="https://www.coupang.com/vp/products/example",
             page_title="테슬라 센터 콘솔 수납함",
@@ -272,7 +482,6 @@ async def test_coupang_product_preview_returns_partner_product(tmp_path, monkeyp
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
-                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -310,7 +519,6 @@ async def test_coupang_product_preview_allows_deeplink_when_name_is_missing(tmp_
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
-                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -351,7 +559,6 @@ async def test_threads_draft_rejects_manual_name_without_api_confirmation(tmp_pa
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
-                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -393,7 +600,6 @@ async def test_coupang_product_preview_uses_manual_name_as_search_keyword(tmp_pa
             json={
                 "coupang_access_key": "access",
                 "coupang_secret_key": "secret",
-                "coupang_proxy_url": "http://proxy.example:8080",
             },
         )
         response = await client.post(
@@ -406,7 +612,6 @@ async def test_coupang_product_preview_uses_manual_name_as_search_keyword(tmp_pa
 
         assert response.status_code == 200
         assert calls[0]["product_keyword"] == "세상의모든제품 테슬라 모델Y주니퍼 센터 콘솔 수납함"
-        assert calls[0]["proxy_url"] == "http://proxy.example:8080"
         payload = response.json()
         assert payload["product_name"].startswith("세상의모든제품")
         assert payload["image_url"] == "https://image.example/tesla.jpg"
@@ -460,7 +665,7 @@ async def test_threads_draft_reuses_preview_partner_url(tmp_path, monkeypatch):
 async def test_threads_draft_requires_coupang_api_when_product_context_is_blocked(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name, proxy_url="": ProductContext(source_url=url, resolved_url=url, facts=[]),
+        lambda url, product_name: ProductContext(source_url=url, resolved_url=url, facts=[]),
     )
     app = create_app(tmp_path / "api.sqlite3")
     transport = ASGITransport(app=app)
@@ -479,7 +684,7 @@ async def test_threads_draft_requires_coupang_api_when_product_context_is_blocke
 async def test_api_create_job_can_infer_product_name_and_image_from_url(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name, proxy_url="": ProductContext(
+        lambda url, product_name: ProductContext(
             source_url=url,
             resolved_url="https://www.logitech.com/ko-kr/shop/p/mx-master-4",
             page_title="MX Master 4 무선 마우스 | Logitech",
@@ -508,7 +713,7 @@ async def test_api_create_job_can_infer_product_name_and_image_from_url(tmp_path
 async def test_api_create_job_reuses_known_product_context_for_same_url(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name, proxy_url="": ProductContext(source_url=url, resolved_url=url, facts=[]),
+        lambda url, product_name: ProductContext(source_url=url, resolved_url=url, facts=[]),
     )
     app = create_app(tmp_path / "api.sqlite3")
     transport = ASGITransport(app=app)
@@ -672,7 +877,7 @@ async def test_api_rejects_approval_without_candidate_image(tmp_path):
 async def test_api_campaign_generation_and_generated_image_update(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name, proxy_url="": ProductContext(source_url=url, resolved_url=url, facts=[]),
+        lambda url, product_name: ProductContext(source_url=url, resolved_url=url, facts=[]),
     )
     app = create_app(tmp_path / "api.sqlite3")
     transport = ASGITransport(app=app)
@@ -711,7 +916,7 @@ async def test_api_campaign_generation_and_generated_image_update(tmp_path, monk
 
 @pytest.mark.anyio
 async def test_api_campaign_uses_fetched_product_context(tmp_path, monkeypatch):
-    def fake_fetch_best_product_context(url, product_name, proxy_url=""):
+    def fake_fetch_best_product_context(url, product_name):
         return ProductContext(
             source_url=url,
             resolved_url="https://www.coupang.com/vp/products/example",
@@ -751,7 +956,7 @@ async def test_api_campaign_uses_fetched_product_context(tmp_path, monkeypatch):
 async def test_api_campaign_prefers_saved_product_name_over_official_page_title(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name, proxy_url="": ProductContext(
+        lambda url, product_name: ProductContext(
             source_url=url,
             resolved_url="https://www.logitech.com/ko-kr/shop/p/mx-master-4",
             page_title="MX Master 4 무선 마우스 | Logitech",
@@ -795,7 +1000,7 @@ async def test_api_campaign_reuses_known_campaign_when_same_url_later_blocks_con
         ProductContext(source_url="https://link.coupang.com/a/table", resolved_url="https://link.coupang.com/a/table", facts=[]),
     ]
 
-    def fake_fetch_best_product_context(url, product_name, proxy_url=""):
+    def fake_fetch_best_product_context(url, product_name):
         return contexts.pop(0) if contexts else ProductContext(source_url=url, resolved_url=url, facts=[])
 
     monkeypatch.setattr("codex_coupang_workbench.main.fetch_best_product_context", fake_fetch_best_product_context)
@@ -840,7 +1045,7 @@ async def test_threads_profile_auth_callback_and_publish_flow(tmp_path, monkeypa
     )
     monkeypatch.setattr(
         "codex_coupang_workbench.main.fetch_best_product_context",
-        lambda url, product_name, proxy_url="": ProductContext(
+        lambda url, product_name: ProductContext(
             source_url=url,
             resolved_url="https://www.coupang.com/vp/products/example",
             page_title="테슬라 파노라마 선루프 썬쉐이드 차광 커버",

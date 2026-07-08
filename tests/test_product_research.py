@@ -97,7 +97,7 @@ def test_parse_official_search_results_prefers_brand_official_pages():
 def test_fetch_best_product_context_uses_official_context_when_store_page_is_sparse(monkeypatch):
     monkeypatch.setattr(
         "codex_coupang_workbench.product_research.fetch_product_context",
-        lambda url, timeout=8.0, proxy_url="": ProductContext(source_url=url, resolved_url=url, facts=[]),
+        lambda url, timeout=8.0: ProductContext(source_url=url, resolved_url=url, facts=[]),
     )
     monkeypatch.setattr(
         "codex_coupang_workbench.product_research.fetch_official_product_context",
@@ -120,11 +120,11 @@ def test_fetch_best_product_context_uses_official_context_when_store_page_is_spa
     assert "Actions Ring shortcuts" in context.facts
 
 
-def test_fetch_best_product_context_passes_proxy_to_store_page_fetch(monkeypatch):
+def test_fetch_best_product_context_uses_store_page_fetch(monkeypatch):
     calls = []
 
-    def fake_fetch_product_context(url, timeout=8.0, proxy_url=""):
-        calls.append({"url": url, "proxy_url": proxy_url})
+    def fake_fetch_product_context(url, timeout=8.0):
+        calls.append({"url": url})
         return ProductContext(source_url=url, resolved_url=url, page_title="쿠팡 상품", facts=["상품 설명"])
 
     monkeypatch.setattr("codex_coupang_workbench.product_research.fetch_product_context", fake_fetch_product_context)
@@ -132,14 +132,12 @@ def test_fetch_best_product_context_passes_proxy_to_store_page_fetch(monkeypatch
     context = fetch_best_product_context(
         product_url="https://www.coupang.com/vp/products/example",
         product_name="테스트 상품",
-        proxy_url="http://proxy.example:8080",
     )
 
     assert context.page_title == "쿠팡 상품"
     assert calls == [
         {
             "url": "https://www.coupang.com/vp/products/example",
-            "proxy_url": "http://proxy.example:8080",
         }
     ]
 

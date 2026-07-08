@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from secrets import compare_digest
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -27,9 +29,11 @@ from .schemas import (
     ThreadsDraftPayload,
     ThreadsProfilePayload,
     ThreadsPublishPayload,
+    ThreadsRemotePublishPayload,
 )
 from .storage import WorkbenchStore
 from .threads import ThreadsApiClient, ThreadsApiError
+from .threads_bridge import ThreadsBridgeClient, ThreadsBridgeError
 from .writer import generate_campaign, generate_draft, generate_threads_comment, generate_threads_post
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -38,12 +42,19 @@ DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "workbench.sqlite3"
 STATIC_DIR = PACKAGE_DIR / "static"
 ICON_PATH = PACKAGE_DIR.parent / "assets" / "appicon.ico"
 THREADS_IMPORT_STATE_PREFIX = "import-current-profile:"
-SECRET_SETTING_KEYS = {"coupang_proxy_url", "coupang_secret_key", "threads_app_secret", "openai_api_key"}
+SECRET_SETTING_KEYS = {
+    "coupang_secret_key",
+    "threads_app_secret",
+    "threads_service_api_key",
+    "openai_api_key",
+}
+REMOVED_SETTING_KEYS = {"coupang_proxy_url"}
 SECRET_MASK = "********"
+THREADS_BRIDGE_API_KEY_ENV = "THREADS_BRIDGE_API_KEY"
 
 
 def public_settings(settings: dict[str, str]) -> dict[str, str]:
-    visible = dict(settings)
+    visible = {key: value for key, value in settings.items() if key not in REMOVED_SETTING_KEYS}
     for key in SECRET_SETTING_KEYS:
         if key in visible and visible[key]:
             visible[key] = SECRET_MASK
@@ -63,6 +74,14 @@ def settings_to_store(payload: SettingsPayload, current_settings: dict[str, str]
     return settings
 
 
+def threads_service_url(settings: dict[str, str]) -> str:
+    return settings.get("threads_service_url", "").strip().rstrip("/")
+
+
+def uses_remote_threads_service(settings: dict[str, str]) -> bool:
+    return bool(threads_service_url(settings))
+
+
 def fetch_coupang_partner_product(
     product_url: str,
     settings: dict[str, str],
@@ -78,7 +97,6 @@ def fetch_coupang_partner_product(
         secret_key=secret_key,
         sub_id=settings.get("coupang_sub_id", ""),
         product_keyword=product_keyword,
-        proxy_url=settings.get("coupang_proxy_url", ""),
     )
     return partner_product, resolved_url
 
@@ -133,6 +151,23 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             app_secret=app_secret,
             redirect_uri=redirect_uri,
         )
+
+    def get_threads_bridge_client(settings: dict[str, str]) -> ThreadsBridgeClient:
+        try:
+            return ThreadsBridgeClient(
+                threads_service_url(settings),
+                api_key=settings.get("threads_service_api_key", ""),
+            )
+        except ThreadsBridgeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    def require_threads_bridge_access(settings: dict[str, str], request: Request) -> None:
+        expected_api_key = os.environ.get(THREADS_BRIDGE_API_KEY_ENV, "").strip()
+        if not expected_api_key:
+            return
+        provided_api_key = request.headers.get("X-Threads-Bridge-Key", "").strip()
+        if not provided_api_key or not compare_digest(provided_api_key, expected_api_key):
+            raise HTTPException(status_code=401, detail="Threads bridge API key is required")
 
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -211,7 +246,6 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             product_context = fetch_best_product_context(
                 payload.product_url,
                 product_name,
-                proxy_url=store.get_settings().get("coupang_proxy_url", ""),
             )
             product_name = product_name or product_context.page_title
             image_url = image_url or product_context.image_url
@@ -252,7 +286,6 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         product_context = fetch_best_product_context(
             job["product_url"],
             job["product_name"],
-            proxy_url=settings.get("coupang_proxy_url", ""),
         )
         if not (product_context.facts or product_context.description.strip()):
             known_campaign = store.get_known_campaign_context(job["product_url"])
@@ -355,18 +388,50 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         return PublishHandoff(status="NEEDS_BROWSER_REVIEW", message=message)
 
     @app.get("/api/threads/profiles")
-    def list_threads_profiles(store: WorkbenchStore = Depends(get_store)) -> list[dict[str, Any]]:
+    def list_threads_profiles(
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> list[dict[str, Any]]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).list_profiles()
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
         return store.list_threads_profiles()
 
     @app.get("/api/threads/publish-records")
-    def list_threads_publish_records(store: WorkbenchStore = Depends(get_store)) -> list[dict[str, Any]]:
+    def list_threads_publish_records(
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> list[dict[str, Any]]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).list_publish_records()
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
         return store.list_threads_publish_records()
 
     @app.post("/api/threads/profiles")
     def upsert_threads_profile(
         payload: ThreadsProfilePayload,
+        request: Request,
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, Any]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).upsert_profile(
+                    profile_key=payload.profile_key,
+                    display_name=payload.display_name,
+                    notes=payload.notes,
+                )
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
         try:
             return store.upsert_threads_profile(
                 profile_key=payload.profile_key,
@@ -379,19 +444,35 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     @app.get("/api/threads/auth/start")
     def start_threads_auth(
         profile_key: str,
+        request: Request,
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, str]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).start_auth(profile_key.strip())
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
         profile = store.get_threads_profile(profile_key)
         if profile is None:
             raise HTTPException(status_code=404, detail="Threads profile not found")
-        client = get_threads_client(store.get_settings())
+        client = get_threads_client(settings)
         return {"auth_url": client.build_authorization_url(profile_key.strip())}
 
     @app.get("/api/threads/auth/import/start")
     def start_threads_profile_import(
+        request: Request,
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, str]:
-        client = get_threads_client(store.get_settings())
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).start_import()
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
+        client = get_threads_client(settings)
         state = f"{THREADS_IMPORT_STATE_PREFIX}{uuid4().hex}"
         return {"auth_url": client.build_authorization_url(state)}
 
@@ -484,7 +565,6 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             product_context = fetch_best_product_context(
                 product_url,
                 product_name,
-                proxy_url=settings.get("coupang_proxy_url", ""),
             )
         if not product_name:
             known_context = store.get_known_product_context(product_url)
@@ -539,15 +619,15 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         )
         return {"job": updated_job, "text": threads_text, "comment_text": comment_text}
 
-    @app.post("/api/threads/publish")
-    def publish_threads_post(
-        payload: ThreadsPublishPayload,
-        store: WorkbenchStore = Depends(get_store),
+    def publish_threads_job(
+        *,
+        job: dict[str, Any],
+        profile_key: str,
+        text: str,
+        comment_text: str,
+        store: WorkbenchStore,
     ) -> dict[str, Any]:
-        job = store.get_job(payload.job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Job not found")
-        profile = store.get_threads_profile(payload.profile_key, include_token=True)
+        profile = store.get_threads_profile(profile_key, include_token=True)
         if profile is None:
             raise HTTPException(status_code=404, detail="Threads profile not found")
         if not profile.get("is_connected"):
@@ -559,21 +639,21 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 published = client.publish_image(
                     threads_user_id=profile["threads_user_id"],
                     access_token=profile["access_token"],
-                    text=payload.text,
+                    text=text,
                     image_url=image_url,
                 )
             else:
                 published = client.publish_text(
                     threads_user_id=profile["threads_user_id"],
                     access_token=profile["access_token"],
-                    text=payload.text,
+                    text=text,
                 )
         except ThreadsApiError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
         post_id = str(published.get("id", "")).strip()
         if not post_id:
             raise HTTPException(status_code=400, detail="Threads publish response did not include an id")
-        comment_text = payload.comment_text.strip()
+        comment_text = comment_text.strip()
         reply_id = ""
         if comment_text:
             try:
@@ -587,11 +667,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 raise HTTPException(status_code=400, detail=str(exc)) from None
             reply_id = str(reply.get("id", "")).strip()
         updated_job = store.mark_threads_published(
-            job_id=payload.job_id,
-            profile_key=payload.profile_key,
+            job_id=job["id"],
+            profile_key=profile_key,
             threads_post_id=post_id,
             threads_reply_id=reply_id,
-            published_text=f"본문:\n{payload.text.strip()}\n\n댓글:\n{comment_text}" if comment_text else payload.text,
+            published_text=f"본문:\n{text.strip()}\n\n댓글:\n{comment_text}" if comment_text else text,
         )
         return {
             "status": "THREADS_PUBLISHED",
@@ -600,17 +680,107 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             "job": updated_job,
         }
 
+    @app.post("/api/threads/publish")
+    def publish_threads_post(
+        payload: ThreadsPublishPayload,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        job = store.get_job(payload.job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                remote_result = get_threads_bridge_client(settings).publish(
+                    profile_key=payload.profile_key,
+                    product_url=job["product_url"],
+                    product_name=job["product_name"],
+                    image_url=job.get("image_url", ""),
+                    text=payload.text,
+                    comment_text=payload.comment_text,
+                )
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+            post_id = str(remote_result.get("threads_post_id", "")).strip()
+            reply_id = str(remote_result.get("threads_reply_id", "")).strip()
+            if not post_id:
+                raise HTTPException(status_code=502, detail="Threads service did not return a post id")
+            updated_job = store.mark_threads_published(
+                job_id=payload.job_id,
+                profile_key=payload.profile_key,
+                threads_post_id=post_id,
+                threads_reply_id=reply_id,
+                published_text=(
+                    f"본문:\n{payload.text.strip()}\n\n댓글:\n{payload.comment_text.strip()}"
+                    if payload.comment_text.strip()
+                    else payload.text
+                ),
+            )
+            return {
+                "status": "THREADS_PUBLISHED",
+                "threads_post_id": post_id,
+                "threads_reply_id": reply_id,
+                "job": updated_job,
+                "remote_job": remote_result.get("job", {}),
+            }
+        require_threads_bridge_access(settings, request)
+        return publish_threads_job(
+            job=job,
+            profile_key=payload.profile_key,
+            text=payload.text,
+            comment_text=payload.comment_text,
+            store=store,
+        )
+
+    @app.post("/api/threads/remote-publish")
+    def publish_remote_threads_post(
+        payload: ThreadsRemotePublishPayload,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        settings = store.get_settings()
+        require_threads_bridge_access(settings, request)
+        job = store.add_job(
+            product_url=payload.product_url,
+            product_name=payload.product_name,
+            image_url=payload.image_url,
+        )
+        job = store.update_job_threads_draft(
+            job["id"],
+            text=payload.text,
+            comment_text=payload.comment_text,
+            title=f"{payload.product_name} Threads",
+            tags=["쿠팡파트너스", "Threads"],
+            image_url=payload.image_url or None,
+        )
+        return publish_threads_job(
+            job=job,
+            profile_key=payload.profile_key,
+            text=payload.text,
+            comment_text=payload.comment_text,
+            store=store,
+        )
+
     @app.post("/api/threads/profiles/{profile_key}/refresh")
     def refresh_threads_profile_token(
         profile_key: str,
+        request: Request,
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, Any]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).refresh_profile(profile_key)
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
         profile = store.get_threads_profile(profile_key, include_token=True)
         if profile is None:
             raise HTTPException(status_code=404, detail="Threads profile not found")
         if not profile.get("is_connected"):
             raise HTTPException(status_code=400, detail="Threads profile is not connected")
-        client = get_threads_client(store.get_settings())
+        client = get_threads_client(settings)
         try:
             refreshed = client.refresh_long_lived_token(profile["access_token"])
         except ThreadsApiError as exc:
