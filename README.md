@@ -45,6 +45,11 @@ http://127.0.0.1:8765
 - 쿠팡 URL만 입력해서 Threads 본문과 댓글 생성
 - 본문은 상품이 궁금해지도록 작성하고, 댓글에는 쿠팡 파트너스 고지와 링크를 자동 배치
 - 사용자가 본문/댓글 미리보기를 확인하고 수정
+- 상품 이미지는 Threads 게시 이미지로 기본 사용하지 않음
+- AI로 실제 상품처럼 보이는 이미지는 기본 제외
+- 이미지는 필요한 경우 무료/오픈 이미지 중 웃기거나 이상한 상황 후킹 이미지 후보를 검토 후 사용
+- 후킹 이미지 URL이 있으면 발행 전 미리보기로 확인
+- Image Gen 결과 Base64를 AWS에 업로드해 Meta가 접근 가능한 public HTTPS 이미지 URL로 변환
 - `Publish to Threads` 버튼으로 본문 발행 후 댓글을 이어서 발행
 - 발행한 상품, 쿠팡 URL, 발행 프로필, Threads post ID, reply ID, 발행 시각 저장
 
@@ -107,6 +112,7 @@ export THREADS_BRIDGE_API_KEY="긴_랜덤_문자열"
 export THREADS_APP_ID="Meta 앱 ID"
 export THREADS_APP_SECRET="Meta 앱 시크릿"
 export THREADS_REDIRECT_URI="https://sinabro-ai.com/threads-copas/api/threads/auth/callback"
+export THREADS_PUBLIC_BASE_URL="https://sinabro-ai.com/threads-copas"
 uvicorn codex_coupang_workbench.threads_api:app --host 0.0.0.0 --port 8765
 ```
 
@@ -117,6 +123,7 @@ Environment="THREADS_BRIDGE_API_KEY=긴_랜덤_문자열"
 Environment="THREADS_APP_ID=Meta 앱 ID"
 Environment="THREADS_APP_SECRET=Meta 앱 시크릿"
 Environment="THREADS_REDIRECT_URI=https://sinabro-ai.com/threads-copas/api/threads/auth/callback"
+Environment="THREADS_PUBLIC_BASE_URL=https://sinabro-ai.com/threads-copas"
 ```
 
 AWS API 서버에서 열리는 엔드포인트는 Threads 브리지 API만입니다.
@@ -129,9 +136,11 @@ GET  /api/threads/auth/start
 GET  /api/threads/auth/import/start
 GET  /api/threads/auth/callback
 GET  /api/threads/publish-records
+POST /api/threads/media
 POST /api/threads/remote-publish
 POST /api/threads/profiles/{profile_key}/refresh
 POST /api/threads/profiles/{profile_key}/disconnect
+GET  /media/{filename}
 ```
 
 로컬 화면은 기존 앱을 실행합니다.

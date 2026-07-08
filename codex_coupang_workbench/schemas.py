@@ -61,6 +61,9 @@ class ThreadsDraftPayload(BaseModel):
     coupang_channel_id: str = ""
     product_name: str = ""
     image_url: str = ""
+    hook_image_url: str = ""
+    hook_image_no_product: bool = False
+    hook_image_permission_reviewed: bool = False
     memo: str = ""
 
 
@@ -89,3 +92,9 @@ class ThreadsRemotePublishPayload(BaseModel):
     image_url: str = ""
     text: str = Field(min_length=1)
     comment_text: str = ""
+
+
+class ThreadsMediaUploadPayload(BaseModel):
+    filename: str = "hook-image.png"
+    content_type: str = "image/png"
+    image_base64: str = Field(min_length=1)

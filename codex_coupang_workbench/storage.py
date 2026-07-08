@@ -502,6 +502,10 @@ class WorkbenchStore:
         image_url = candidate["image_url"].strip()
         if not image_url:
             raise ValueError("image_url is required before approving a media candidate")
+        if candidate["product_visible"]:
+            raise ValueError("상품이 보이는 이미지는 사용할 수 없습니다")
+        if not candidate["permission_reviewed"]:
+            raise ValueError("무료/오픈 이미지 권한 검토가 필요합니다")
         now = utc_now()
         with self._connect() as conn:
             conn.execute(

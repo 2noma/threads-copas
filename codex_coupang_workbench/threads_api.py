@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 from pathlib import Path
 from secrets import compare_digest
@@ -7,9 +9,9 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
-from .schemas import ThreadsProfilePayload, ThreadsRemotePublishPayload
+from .schemas import ThreadsMediaUploadPayload, ThreadsProfilePayload, ThreadsRemotePublishPayload
 from .storage import WorkbenchStore
 from .threads import ThreadsApiClient, ThreadsApiError
 
@@ -21,11 +23,19 @@ THREADS_BRIDGE_API_KEY_ENV = "THREADS_BRIDGE_API_KEY"
 THREADS_APP_ID_ENV = "THREADS_APP_ID"
 THREADS_APP_SECRET_ENV = "THREADS_APP_SECRET"
 THREADS_REDIRECT_URI_ENV = "THREADS_REDIRECT_URI"
+THREADS_PUBLIC_BASE_URL_ENV = "THREADS_PUBLIC_BASE_URL"
+ALLOWED_MEDIA_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+MAX_MEDIA_BYTES = 8 * 1024 * 1024
 
 
 def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     app = FastAPI(title="Threads Coupang API")
     store = WorkbenchStore(db_path)
+    media_dir = Path(db_path).parent / "public_media"
 
     def get_store() -> WorkbenchStore:
         return store
@@ -49,6 +59,43 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             app_secret=app_secret,
             redirect_uri=redirect_uri,
         )
+
+    def public_base_url(request: Request) -> str:
+        configured = os.environ.get(THREADS_PUBLIC_BASE_URL_ENV, "").strip().rstrip("/")
+        if configured:
+            return configured
+        return str(request.base_url).rstrip("/")
+
+    def decode_image_payload(payload: ThreadsMediaUploadPayload) -> tuple[bytes, str]:
+        content_type = payload.content_type.strip().lower()
+        if content_type not in ALLOWED_MEDIA_TYPES:
+            allowed = ", ".join(sorted(ALLOWED_MEDIA_TYPES))
+            raise HTTPException(status_code=400, detail=f"content_type must be one of: {allowed}")
+        raw_base64 = payload.image_base64.strip()
+        if raw_base64.startswith("data:") and "," in raw_base64:
+            header, raw_base64 = raw_base64.split(",", 1)
+            data_content_type = header.removeprefix("data:").split(";", 1)[0].strip().lower()
+            if data_content_type:
+                content_type = data_content_type
+            if content_type not in ALLOWED_MEDIA_TYPES:
+                allowed = ", ".join(sorted(ALLOWED_MEDIA_TYPES))
+                raise HTTPException(status_code=400, detail=f"content_type must be one of: {allowed}")
+        compact_base64 = "".join(raw_base64.split())
+        try:
+            image_bytes = base64.b64decode(compact_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="image_base64 must be valid base64") from exc
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="image_base64 is empty")
+        if len(image_bytes) > MAX_MEDIA_BYTES:
+            raise HTTPException(status_code=400, detail="image is too large")
+        if content_type == "image/png" and not image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise HTTPException(status_code=400, detail="image_base64 is not a valid PNG image")
+        if content_type == "image/jpeg" and not image_bytes.startswith(b"\xff\xd8\xff"):
+            raise HTTPException(status_code=400, detail="image_base64 is not a valid JPEG image")
+        if content_type == "image/webp" and not (image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP"):
+            raise HTTPException(status_code=400, detail="image_base64 is not a valid WEBP image")
+        return image_bytes, content_type
 
     def publish_threads_job(
         *,
@@ -114,6 +161,35 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "threads-api"}
+
+    @app.get("/media/{filename}")
+    def get_media(filename: str) -> FileResponse:
+        if "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=404, detail="Media not found")
+        path = media_dir / filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Media not found")
+        suffix = path.suffix.lower()
+        media_type = next((item for item, ext in ALLOWED_MEDIA_TYPES.items() if ext == suffix), "application/octet-stream")
+        return FileResponse(path, media_type=media_type)
+
+    @app.post("/api/threads/media")
+    def upload_media(
+        payload: ThreadsMediaUploadPayload,
+        request: Request,
+    ) -> dict[str, str]:
+        require_bridge_access(request)
+        image_bytes, content_type = decode_image_payload(payload)
+        media_dir.mkdir(parents=True, exist_ok=True)
+        extension = ALLOWED_MEDIA_TYPES[content_type]
+        filename = f"{uuid4().hex}{extension}"
+        path = media_dir / filename
+        path.write_bytes(image_bytes)
+        return {
+            "image_url": f"{public_base_url(request)}/media/{filename}",
+            "filename": filename,
+            "content_type": content_type,
+        }
 
     @app.get("/api/threads/profiles")
     def list_threads_profiles(

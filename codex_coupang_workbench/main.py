@@ -30,6 +30,7 @@ from .schemas import (
     PublishHandoff,
     SettingsPayload,
     ThreadsDraftPayload,
+    ThreadsMediaUploadPayload,
     ThreadsProfilePayload,
     ThreadsPublishPayload,
     ThreadsRemotePublishPayload,
@@ -187,6 +188,21 @@ def enrich_partner_product_with_local_context(
         facts=product.facts or tuple(context.facts or ()),
         product_id=product.product_id,
     )
+
+
+def approved_threads_hook_image_url(job: dict[str, Any], store: WorkbenchStore) -> str:
+    job_image_url = str(job.get("image_url") or "").strip()
+    if not job_image_url:
+        return ""
+    for candidate in store.list_media_candidates(job["id"]):
+        if (
+            candidate.get("review_status") == "APPROVED"
+            and str(candidate.get("image_url") or "").strip() == job_image_url
+            and not candidate.get("product_visible")
+            and candidate.get("permission_reviewed")
+        ):
+            return job_image_url
+    return ""
 
 
 def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
@@ -490,6 +506,23 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         require_threads_bridge_access(settings, request)
         return store.list_threads_publish_records()
 
+    @app.post("/api/threads/media")
+    def upload_threads_media(
+        payload: ThreadsMediaUploadPayload,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, str]:
+        settings = store.get_settings()
+        if not uses_remote_threads_service(settings):
+            raise HTTPException(status_code=400, detail="Threads Service URL is required to host generated images")
+        try:
+            return get_threads_bridge_client(settings).upload_media(
+                filename=payload.filename,
+                content_type=payload.content_type,
+                image_base64=payload.image_base64,
+            )
+        except ThreadsBridgeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from None
+
     @app.post("/api/threads/profiles")
     def upsert_threads_profile(
         payload: ThreadsProfilePayload,
@@ -605,10 +638,15 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     ) -> dict[str, Any]:
         settings = store.get_settings()
         product_name = payload.product_name.strip()
-        image_url = payload.image_url.strip()
+        image_url = ""
         product_url = payload.product_url.strip()
         product_context = None
         partner_url = payload.partner_url.strip()
+        hook_image_url = payload.hook_image_url.strip() or payload.image_url.strip()
+        if hook_image_url and not payload.hook_image_permission_reviewed:
+            raise HTTPException(status_code=400, detail="후킹 이미지 권한 검토가 필요합니다.")
+        if hook_image_url and not payload.hook_image_no_product:
+            raise HTTPException(status_code=400, detail="후킹 이미지는 상품이 보이지 않는 이미지만 사용할 수 있습니다.")
         api_error = ""
         if settings.get("coupang_access_key", "").strip() and settings.get("coupang_secret_key", "").strip():
             try:
@@ -630,7 +668,6 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                         resolved_url=resolved_url or product_url,
                     )
                     product_name = partner_product.product_name
-                    image_url = image_url or partner_product.image_url
                     partner_url = partner_url or partner_product.partner_url
                 elif product_name and partner_product.partner_url:
                     partner_url = partner_url or partner_product.partner_url
@@ -645,7 +682,6 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                         source_url=product_url,
                         resolved_url=resolved_url or product_url,
                     )
-                    image_url = image_url or partner_product.image_url
                 else:
                     api_error = "상품명으로 쿠팡 API에서 정확한 상품을 확인하지 못했습니다."
             except CoupangPartnersError as exc:
@@ -677,8 +713,6 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 status_code=400,
                 detail=detail,
             )
-        if not image_url:
-            image_url = product_context.image_url
         final_product_url = partner_url or product_url
         job = store.add_job(
             product_url=final_product_url,
@@ -686,6 +720,21 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             image_url=image_url,
             memo=payload.memo,
         )
+        if hook_image_url:
+            candidate = store.add_media_candidate(
+                job_id=job["id"],
+                source="hook-image",
+                source_url=hook_image_url,
+                image_url=hook_image_url,
+                title=f"{job['product_name']} 후킹 이미지",
+                notes="발행 전 확인한 무료/오픈 상황 후킹 이미지",
+                no_captions=True,
+                no_tts=True,
+                product_visible=False,
+                permission_reviewed=True,
+            )
+            store.approve_media_candidate(candidate["id"])
+            job = store.get_job(job["id"]) or job
         threads_text = generate_threads_post(
             product_name=job["product_name"],
             product_url=job["product_url"],
@@ -711,9 +760,14 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             comment_text=comment_text,
             title=f"{job['product_name']} Threads",
             tags=["쿠팡파트너스", "Threads"],
-            image_url=image_url or None,
+            image_url=hook_image_url or image_url or None,
         )
-        return {"job": updated_job, "text": threads_text, "comment_text": comment_text}
+        return {
+            "job": updated_job,
+            "text": threads_text,
+            "comment_text": comment_text,
+            "publish_image_url": approved_threads_hook_image_url(updated_job, store),
+        }
 
     def publish_threads_job(
         *,
@@ -722,6 +776,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         text: str,
         comment_text: str,
         store: WorkbenchStore,
+        image_url_override: str = "",
     ) -> dict[str, Any]:
         profile = store.get_threads_profile(profile_key, include_token=True)
         if profile is None:
@@ -729,7 +784,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         if not profile.get("is_connected"):
             raise HTTPException(status_code=400, detail="Threads profile is not connected")
         client = get_threads_client(store.get_settings())
-        image_url = str(job.get("image_url") or "").strip()
+        image_url = image_url_override.strip() or approved_threads_hook_image_url(job, store)
         try:
             if image_url:
                 published = client.publish_image(
@@ -792,7 +847,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     profile_key=payload.profile_key,
                     product_url=job["product_url"],
                     product_name=job["product_name"],
-                    image_url=job.get("image_url", ""),
+                    image_url=approved_threads_hook_image_url(job, store),
                     text=payload.text,
                     comment_text=payload.comment_text,
                 )
@@ -856,6 +911,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             text=payload.text,
             comment_text=payload.comment_text,
             store=store,
+            image_url_override=payload.image_url,
         )
 
     @app.post("/api/threads/profiles/{profile_key}/refresh")

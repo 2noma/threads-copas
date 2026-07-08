@@ -2,6 +2,7 @@ const state = {
   profiles: [],
   records: [],
   draftJobId: "",
+  draftImageUrl: "",
   productPreview: null,
   channelIds: [],
 };
@@ -180,7 +181,7 @@ async function previewCoupangProduct() {
     });
     state.productPreview = preview;
     form.elements.partner_url.value = manualPartnerUrl || preview.partner_url || "";
-    form.elements.image_url.value = preview.image_url || "";
+    form.elements.image_url.value = "";
     if (preview.product_name) {
       form.elements.product_name.value = preview.product_name;
     }
@@ -239,6 +240,42 @@ async function createCoupangDeeplink() {
   }
 }
 
+async function uploadGeneratedHookImage() {
+  const form = $("#threads-draft-form");
+  const message = $("#threads-media-message");
+  const imageBase64 = form.elements.generated_image_base64.value.trim();
+  if (!imageBase64) {
+    message.textContent = "Base64 이미지를 붙여넣으세요.";
+    return;
+  }
+  setBusy(true);
+  try {
+    message.textContent = "이미지 URL 생성 중...";
+    const uploaded = await api("/api/threads/media", {
+      method: "POST",
+      body: JSON.stringify({
+        filename: "threads-hook-image.png",
+        content_type: detectImageContentType(imageBase64),
+        image_base64: imageBase64,
+      }),
+    });
+    form.elements.hook_image_url.value = uploaded.image_url || "";
+    state.draftJobId = "";
+    state.draftImageUrl = "";
+    renderThreadImagePreview(
+      uploaded.image_url || "",
+      form.elements.product_name.value.trim() || state.productPreview?.product_name || ""
+    );
+    message.textContent = "이미지 URL 준비 완료";
+    clearMessage(message);
+  } catch (error) {
+    console.error(error);
+    message.textContent = error.message || "이미지 URL을 만들지 못했습니다.";
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function generateDraft(event) {
   event.preventDefault();
   const message = $("#threads-draft-message");
@@ -265,14 +302,18 @@ async function generateDraft(event) {
   setBusy(true);
   try {
     message.textContent = "generating...";
+    const payload = formToObject(form);
+    delete payload.generated_image_base64;
     const draft = await api("/api/threads/draft", {
       method: "POST",
-      body: JSON.stringify(formToObject(form)),
+      body: JSON.stringify(payload),
     });
     state.draftJobId = draft.job.id;
+    state.draftImageUrl = draft.publish_image_url || "";
     $("#threads-preview").value = draft.text;
     $("#threads-comment-preview").value = draft.comment_text || "";
     $("#selected-product-label").textContent = draft.job.product_name || "selected product";
+    renderThreadImagePreview(state.draftImageUrl, draft.job.product_name || "");
     message.textContent = "draft ready";
   } catch (error) {
     console.error(error);
@@ -313,9 +354,11 @@ async function publishDraft() {
     });
     message.textContent = `published: ${published.threads_post_id}`;
     state.draftJobId = "";
+    state.draftImageUrl = "";
     $("#threads-preview").value = "";
     $("#threads-comment-preview").value = "";
     $("#selected-product-label").textContent = "no product";
+    renderThreadImagePreview();
     await refreshRecords();
   } finally {
     setBusy(false);
@@ -375,6 +418,23 @@ function renderProductPreview() {
           : ""
       }
     </div>
+  `;
+}
+
+function renderThreadImagePreview(imageUrl = "", productName = "") {
+  const container = $("#threads-image-preview");
+  const url = String(imageUrl || "").trim();
+  container.classList.toggle("is-empty", !url);
+  if (!url) {
+    container.innerHTML = '<div class="thread-image-empty">이미지 없음 · 텍스트로만 발행</div>';
+    return;
+  }
+  const alt = productName ? `${productName} 후킹 이미지` : "Threads 후킹 이미지";
+  container.innerHTML = `
+    <figure>
+      <img src="${escapeAttribute(url)}" alt="${escapeAttribute(alt)}" />
+      <figcaption>발행 이미지 · ${escapeHtml(url)}</figcaption>
+    </figure>
   `;
 }
 
@@ -504,6 +564,22 @@ function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("`", "&#096;");
 }
 
+function detectImageContentType(imageBase64) {
+  const rawValue = String(imageBase64).trim();
+  const dataUrlMatch = rawValue.match(/^data:([^;,]+)[;,]/i);
+  if (dataUrlMatch) {
+    return dataUrlMatch[1].toLowerCase();
+  }
+  const compact = rawValue.replace(/\s/g, "");
+  if (compact.startsWith("/9j/")) {
+    return "image/jpeg";
+  }
+  if (compact.startsWith("UklGR")) {
+    return "image/webp";
+  }
+  return "image/png";
+}
+
 function bindEvents() {
   $("#settings-form").addEventListener("submit", saveSettings);
   $("#settings-form").elements.coupang_channel_ids.addEventListener("input", syncCoupangChannelIds);
@@ -514,16 +590,29 @@ function bindEvents() {
   draftForm.elements.product_url.addEventListener("input", () => {
     state.productPreview = null;
     state.draftJobId = "";
+    state.draftImageUrl = "";
     $("#selected-product-label").textContent = "no product";
     $("#product-name-fallback").hidden = true;
     draftForm.elements.product_name.value = "";
     draftForm.elements.image_url.value = "";
+    draftForm.elements.hook_image_url.value = "";
+    draftForm.elements.generated_image_base64.value = "";
     draftForm.elements.partner_url.value = "";
+    renderThreadImagePreview();
     renderProductPreview();
   });
   draftForm.elements.product_name.addEventListener("input", renderProductPreview);
   draftForm.elements.partner_url.addEventListener("input", renderProductPreview);
+  draftForm.elements.hook_image_url.addEventListener("input", () => {
+    state.draftJobId = "";
+    state.draftImageUrl = "";
+    renderThreadImagePreview(
+      draftForm.elements.hook_image_url.value.trim(),
+      draftForm.elements.product_name.value.trim() || state.productPreview?.product_name || ""
+    );
+  });
   draftForm.addEventListener("submit", generateDraft);
+  $("#threads-media-upload-button").addEventListener("click", uploadGeneratedHookImage);
   $("#threads-publish-button").addEventListener("click", publishDraft);
   $("#refresh-button").addEventListener("click", refreshAll);
   $("#threads-profiles-list").addEventListener("click", async (event) => {
@@ -593,6 +682,7 @@ function waitForProfilesChange(authWindow) {
 
 async function init() {
   bindEvents();
+  renderThreadImagePreview();
   await checkHealth();
   await loadSettings();
   await refreshAll();

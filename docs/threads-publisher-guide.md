@@ -41,6 +41,7 @@ export THREADS_BRIDGE_API_KEY="긴_랜덤_문자열"
 export THREADS_APP_ID="Meta 앱 ID"
 export THREADS_APP_SECRET="Meta 앱 시크릿"
 export THREADS_REDIRECT_URI="https://sinabro-ai.com/threads-copas/api/threads/auth/callback"
+export THREADS_PUBLIC_BASE_URL="https://sinabro-ai.com/threads-copas"
 uvicorn codex_coupang_workbench.threads_api:app --host 0.0.0.0 --port 8765
 ```
 
@@ -90,6 +91,7 @@ export THREADS_BRIDGE_API_KEY="긴_랜덤_문자열"
 export THREADS_APP_ID="Meta 앱 ID"
 export THREADS_APP_SECRET="Meta 앱 시크릿"
 export THREADS_REDIRECT_URI="https://sinabro-ai.com/threads-copas/api/threads/auth/callback"
+export THREADS_PUBLIC_BASE_URL="https://sinabro-ai.com/threads-copas"
 uvicorn codex_coupang_workbench.threads_api:app --host 0.0.0.0 --port 8765
 ```
 
@@ -100,6 +102,7 @@ Environment="THREADS_BRIDGE_API_KEY=긴_랜덤_문자열"
 Environment="THREADS_APP_ID=Meta 앱 ID"
 Environment="THREADS_APP_SECRET=Meta 앱 시크릿"
 Environment="THREADS_REDIRECT_URI=https://sinabro-ai.com/threads-copas/api/threads/auth/callback"
+Environment="THREADS_PUBLIC_BASE_URL=https://sinabro-ai.com/threads-copas"
 ```
 
 AWS API 서버는 아래 API만 제공합니다.
@@ -112,9 +115,11 @@ GET  /api/threads/auth/start
 GET  /api/threads/auth/import/start
 GET  /api/threads/auth/callback
 GET  /api/threads/publish-records
+POST /api/threads/media
 POST /api/threads/remote-publish
 POST /api/threads/profiles/{profile_key}/refresh
 POST /api/threads/profiles/{profile_key}/disconnect
+GET  /media/{filename}
 ```
 
 로컬 화면의 `API Settings`에는 아래처럼 저장합니다.
@@ -145,17 +150,33 @@ Codex Model = gpt-5.5
 
 1. 발행 프로필을 선택합니다.
 2. 쿠팡 URL을 붙여넣습니다.
-3. `Generate Thread`를 누릅니다.
+3. 필요한 경우 Image Gen으로 만든 상황 후킹 이미지의 Base64를 `AI 후킹 이미지 Base64`에 붙여넣고 `이미지 URL 만들기`를 누릅니다.
+4. `후킹 이미지 URL`에 public HTTPS URL이 자동 입력되고 `발행 이미지` 미리보기에 이미지가 표시되는지 확인합니다.
+5. `Generate Thread`를 누릅니다.
 
 상품명과 상품 정보는 URL에서 가능한 범위로 자동 확인합니다. 본문은 사람들이 상품을 궁금해하도록 짧게 작성하고, 댓글에는 쿠팡 파트너스 고지 문구와 링크가 들어갑니다.
 
 `Generate Thread`는 Codex CLI를 비대화형으로 호출해 글을 생성합니다. Codex CLI가 없거나 로그인/호출에 실패하면 로컬 템플릿 생성으로 자동 전환됩니다.
+
+## 이미지 운영 원칙
+
+Threads 게시 이미지는 기본적으로 사용하지 않습니다.
+
+- 쿠팡 상품 이미지는 게시 이미지로 자동 사용하지 않습니다.
+- AI로 실제 상품처럼 보이는 이미지는 기본 제외합니다.
+- 필요한 경우에만 Image Gen으로 웃기거나 이상한 상황 후킹 이미지를 만듭니다.
+- 생성 이미지는 AWS Threads API 서버에 파일로 저장해 Meta가 접근 가능한 public HTTPS URL로 바꿉니다.
+- Base64 업로드는 PNG, JPEG, WEBP 이미지를 지원하며 최대 8MB까지 허용합니다.
+- 승인된 후킹 이미지는 `발행 이미지` 미리보기에서 실제로 확인한 뒤 발행합니다.
+- 승인된 후킹 이미지가 없으면 Threads는 텍스트 본문과 댓글만 발행됩니다.
 
 ## 4. 발행 전 확인
 
 생성된 글은 `Threads 본문 미리보기`에 표시됩니다.
 
 댓글은 `댓글 미리보기`에 표시됩니다. 실제 발행에는 두 미리보기 칸에 남아 있는 최종 문구가 사용됩니다.
+
+후킹 이미지가 승인된 경우 `발행 이미지` 미리보기에도 실제 게시될 이미지가 표시됩니다. 이미지가 없으면 텍스트 본문과 댓글만 발행됩니다.
 
 ## 5. 발행
 

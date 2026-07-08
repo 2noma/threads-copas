@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Threads Coupang Publisher</title>
-    <link rel="stylesheet" href="static/styles.css?v=20260704-coupang-preview" />
+    <link rel="stylesheet" href="static/styles.css?v=20260708-generated-media-upload" />
   </head>
   <body>
     <div class="app-shell">
@@ -125,6 +125,20 @@ sinabroinfo</textarea>
               <input name="product_name" autocomplete="off" placeholder="자동 확인이 안 되면 상품명을 입력하고 Generate Thread를 누르세요." />
             </label>
             <div class="wide product-preview" id="coupang-product-preview" hidden></div>
+            <label class="wide">
+              AI 후킹 이미지 Base64
+              <textarea name="generated_image_base64" rows="4" autocomplete="off" placeholder="Image Gen 결과의 base64 또는 data:image/png;base64,... 값을 붙여넣고 이미지 URL 만들기를 누르세요."></textarea>
+            </label>
+            <label class="wide">
+              후킹 이미지 URL
+              <input name="hook_image_url" autocomplete="off" placeholder="이미지 URL 만들기 후 자동 입력됩니다." />
+            </label>
+            <input name="hook_image_no_product" type="hidden" value="true" />
+            <input name="hook_image_permission_reviewed" type="hidden" value="true" />
+            <div class="wide form-actions">
+              <button class="small-button" id="threads-media-upload-button" type="button">이미지 URL 만들기</button>
+              <span id="threads-media-message" class="inline-message"></span>
+            </div>
             <div class="wide form-actions">
               <button class="primary-button" type="submit">Generate Thread</button>
               <span id="coupang-preview-message" class="inline-message"></span>
@@ -140,6 +154,7 @@ sinabroinfo</textarea>
             댓글 미리보기
             <textarea id="threads-comment-preview" rows="5" placeholder="쿠팡 파트너스 고지와 링크가 댓글로 들어갑니다."></textarea>
           </label>
+          <div class="thread-image-preview is-empty" id="threads-image-preview"></div>
           <div class="form-actions publish-actions">
             <button class="primary-button" id="threads-publish-button" type="button">Publish to Threads</button>
             <span id="threads-publish-message" class="inline-message"></span>
@@ -172,6 +187,6 @@ sinabroinfo</textarea>
       </main>
     </div>
 
-    <script src="static/app.js?v=20260708-manual-product-name"></script>
+    <script src="static/app.js?v=20260708-generated-media-upload"></script>
   </body>
 </html>

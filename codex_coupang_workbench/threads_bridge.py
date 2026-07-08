@@ -69,6 +69,18 @@ class ThreadsBridgeClient:
         response = self._request("GET", "/api/threads/auth/import/start")
         return _string_dict(response)
 
+    def upload_media(self, *, filename: str, content_type: str, image_base64: str) -> dict[str, str]:
+        response = self._request(
+            "POST",
+            "/api/threads/media",
+            data={
+                "filename": filename,
+                "content_type": content_type,
+                "image_base64": image_base64,
+            },
+        )
+        return _string_dict(response)
+
     def publish(
         self,
         *,
