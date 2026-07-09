@@ -179,6 +179,30 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             "job": updated_job,
         }
 
+    def refresh_threads_record_insights(job_id: str, store: WorkbenchStore) -> dict[str, Any]:
+        job = store.get_job(job_id)
+        if job is None or job.get("status") != "THREADS_PUBLISHED":
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        post_id = str(job.get("threads_post_id") or "").strip()
+        profile_key = str(job.get("threads_profile_key") or "").strip()
+        if not post_id or not profile_key:
+            raise HTTPException(status_code=400, detail="Threads publish record is missing post or profile data")
+        profile = store.get_threads_profile(profile_key, include_token=True)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Threads profile not found")
+        if not profile.get("is_connected"):
+            raise HTTPException(status_code=400, detail="Threads profile is not connected")
+        try:
+            insights = get_threads_client().fetch_media_insights(post_id, profile["access_token"])
+        except ThreadsApiError as exc:
+            store.update_threads_insights(job_id, {}, error=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        store.update_threads_insights(job_id, insights)
+        record = store.get_threads_publish_record(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        return record
+
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "threads-api"}
@@ -227,6 +251,15 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     ) -> list[dict[str, Any]]:
         require_bridge_access(request)
         return store.list_threads_publish_records()
+
+    @app.post("/api/threads/publish-records/{job_id}/insights")
+    def refresh_threads_publish_record_insights(
+        job_id: str,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        require_bridge_access(request)
+        return refresh_threads_record_insights(job_id, store)
 
     @app.post("/api/threads/profiles")
     def upsert_threads_profile(

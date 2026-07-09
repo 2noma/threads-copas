@@ -13,6 +13,9 @@ Transport = Callable[
     dict[str, Any],
 ]
 
+THREADS_AUTH_SCOPE = "threads_basic,threads_content_publish,threads_manage_replies,threads_manage_insights"
+THREADS_INSIGHT_METRICS = ("views", "likes", "replies", "reposts", "quotes", "shares")
+
 
 class ThreadsApiError(RuntimeError):
     pass
@@ -41,7 +44,7 @@ class ThreadsApiClient:
             {
                 "client_id": self.app_id,
                 "redirect_uri": self.redirect_uri,
-                "scope": "threads_basic,threads_content_publish,threads_manage_replies",
+                "scope": THREADS_AUTH_SCOPE,
                 "response_type": "code",
                 "state": state,
             }
@@ -130,6 +133,25 @@ class ThreadsApiClient:
             reply_to_id=reply_to_id,
         )
 
+    def fetch_media_insights(
+        self,
+        media_id: str,
+        access_token: str,
+        metrics: tuple[str, ...] = THREADS_INSIGHT_METRICS,
+    ) -> dict[str, int]:
+        clean_media_id = media_id.strip()
+        if not clean_media_id:
+            raise ThreadsApiError("Threads media id is required")
+        response = self._transport(
+            "GET",
+            f"{self.api_base_url}/{clean_media_id}/insights",
+            params={
+                "metric": ",".join(metrics),
+                "access_token": access_token,
+            },
+        )
+        return _normalize_insights_response(response, metrics)
+
     def _publish_text_container(
         self,
         threads_user_id: str,
@@ -210,6 +232,36 @@ def _urlopen_transport(
     if not isinstance(parsed, dict):
         raise ThreadsApiError("Threads API returned an unexpected response")
     return parsed
+
+
+def _normalize_insights_response(response: dict[str, Any], metrics: tuple[str, ...]) -> dict[str, int]:
+    normalized = {metric: 0 for metric in metrics}
+    items = response.get("data")
+    if not isinstance(items, list):
+        raise ThreadsApiError("Threads insights response did not include data")
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if name not in normalized:
+            continue
+        values = item.get("values")
+        value = 0
+        if isinstance(values, list) and values:
+            first = values[0]
+            if isinstance(first, dict):
+                value = _safe_int(first.get("value"))
+        else:
+            value = _safe_int(item.get("value"))
+        normalized[name] = value
+    return normalized
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _redact_sensitive_detail(

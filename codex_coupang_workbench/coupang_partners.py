@@ -126,11 +126,12 @@ def fetch_partner_product_context(
     partner_url = client.create_deeplink(resolved_url) or client.create_deeplink(clean_url)
     product_ids = extract_coupang_ids(resolved_url) + extract_coupang_ids(clean_url)
     products: list[dict[str, Any]] = []
+    selected: dict[str, Any] = {}
     for product_id_keyword in _dedupe(product_ids):
         products = client.search_products(product_id_keyword)
-        if products:
+        selected = _select_product(products, product_ids)
+        if selected:
             break
-    selected = _select_product(products, product_ids)
     if not selected and product_keyword.strip():
         products = client.search_products(product_keyword.strip())
         selected = _select_product(products, product_ids)

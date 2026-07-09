@@ -13,6 +13,8 @@ BridgeTransport = Callable[
 ]
 
 BRIDGE_USER_AGENT = "ThreadsCopasBridge/1.0 (+https://sinabro-ai.com)"
+DEFAULT_BRIDGE_TIMEOUT = 20
+PUBLISH_BRIDGE_TIMEOUT = 120
 
 
 class ThreadsBridgeError(RuntimeError):
@@ -44,6 +46,13 @@ class ThreadsBridgeClient:
         if not isinstance(response, list):
             raise ThreadsBridgeError("Threads service returned an unexpected records response")
         return response
+
+    def refresh_record_insights(self, job_id: str) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/api/threads/publish-records/{quote(job_id, safe='')}/insights",
+        )
+        return _ensure_dict(response)
 
     def upsert_profile(self, profile_key: str, display_name: str, notes: str = "") -> dict[str, Any]:
         response = self._request(
@@ -102,6 +111,7 @@ class ThreadsBridgeClient:
                 "text": text,
                 "comment_text": comment_text,
             },
+            timeout=PUBLISH_BRIDGE_TIMEOUT,
         )
         return _ensure_dict(response)
 
@@ -120,6 +130,7 @@ class ThreadsBridgeClient:
         *,
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        timeout: int = DEFAULT_BRIDGE_TIMEOUT,
     ) -> dict[str, Any] | list[dict[str, Any]]:
         url = f"{self.base_url}{path}"
         if params:
@@ -130,7 +141,7 @@ class ThreadsBridgeClient:
         }
         if self.api_key:
             headers["X-Threads-Bridge-Key"] = self.api_key
-        return self._transport(method, url, data=data, headers=headers)
+        return self._transport(method, url, data=data, headers=headers, timeout=timeout)
 
 
 def _urlopen_json_transport(
@@ -139,6 +150,7 @@ def _urlopen_json_transport(
     *,
     data: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
+    timeout: int = DEFAULT_BRIDGE_TIMEOUT,
 ) -> dict[str, Any] | list[dict[str, Any]]:
     body = None
     request_headers = {"Accept": "application/json", **(headers or {})}
@@ -147,7 +159,7 @@ def _urlopen_json_transport(
         request_headers["Content-Type"] = "application/json"
     request = Request(url, data=body, headers=request_headers, method=method.upper())
     try:
-        with urlopen(request, timeout=20) as response:
+        with urlopen(request, timeout=timeout) as response:
             payload = response.read()
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")

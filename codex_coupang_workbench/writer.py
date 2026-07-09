@@ -195,22 +195,11 @@ def generate_threads_post(
     persona: str = "",
 ) -> str:
     clean_name = product_name.strip() or "추천 상품"
-    clean_url = product_url.strip()
     facts = _normalize_facts(product_facts or [])
     if memo.strip():
         facts.extend(_normalize_facts([memo]))
     public_facts = _public_content_facts(_dedupe(facts))
-    detail_line = _threads_detail_sentence(clean_name, public_facts)
-
-    return "\n\n".join(
-        [
-            _threads_hook_sentence(clean_name),
-            clean_name,
-            detail_line,
-            _threads_usage_sentence(clean_name, public_facts),
-            _threads_check_sentence(clean_name),
-        ]
-    )
+    return _threads_curiosity_post(clean_name, public_facts)
 
 
 def generate_threads_comment(product_url: str) -> str:
@@ -239,6 +228,79 @@ def _threads_hook_sentence(product_name: str) -> str:
     if any(term in product_name for term in ("우산", "레인", "부츠", "장우산")):
         return "비 오는 날엔 꺼내기 쉽고 바로 쓰기 편한지가 제일 먼저 보이더라고요."
     return "자주 쓰는 생활템은 거창한 기능보다 실제로 손이 자주 가는지가 중요하죠."
+
+
+def _threads_curiosity_post(product_name: str, facts: list[str]) -> str:
+    context = " ".join([product_name, *facts]).lower()
+    if _has_any(context, ("비상", "탈출", "도어", "개폐", "스트랩", "손잡이")):
+        return "\n\n".join(
+            [
+                "뒷좌석 탄 사람한테\n“문 안 열리면 어떻게 나와?”\n이거 물어보면 대부분 바로 대답 못 함.",
+                "근데 이건 평소엔 아무도 신경 안 쓰다가\n딱 한 번 필요한 순간이 오면\n진짜 표정 굳는 종류임.",
+                "차 꾸미는 건 취향인데\n이런 건 약간 다른 문제라서 더 찝찝함.",
+            ]
+        )
+    if _has_any(context, ("콘솔", "수납", "트레이", "정리함")) and _has_any(
+        context, ("차량", "자동차", "테슬라", "차 안", "차 ")
+    ):
+        return "\n\n".join(
+            [
+                "차 타고 나서\n“그거 어디 뒀지?” 한 번이라도 해봤으면\n이런 쪽을 그냥 지나치기 어려움.",
+                "평소엔 별거 아닌데\n컵홀더 주변이랑 콘솔 쪽이 어수선해지는 순간\n갑자기 엄청 신경 쓰임.",
+                "차 안은 넓어 보여도\n작은 물건 하나 굴러다니면\n이상하게 계속 눈에 밟힘.",
+            ]
+        )
+    if _has_any(context, ("목베개", "목쿠션", "헤드레스트", "메모리폼")):
+        return "\n\n".join(
+            [
+                "차 오래 타는 사람들 중에\n이거 한 번 신경 쓰기 시작하면\n그다음부터 계속 거슬릴 수 있음.",
+                "처음엔 “굳이?” 싶은데\n막상 장거리 한 번 타면\n왜 사람들이 이런 걸 찾는지 바로 이해됨.",
+                "차는 조용한데\n몸이 먼저 불편하다고 말하는 순간이 있음.",
+            ]
+        )
+    if _has_any(context, ("선풍기", "쿨러", "냉각", "에어컨", "손풍기")):
+        return "\n\n".join(
+            [
+                "요즘 밖에서 이거 들고 있으면\n진짜로 한 번씩 쳐다봄.",
+                "그냥 바람 나오는 줄 알았는데\n얼굴 가까이 대는 순간\n“어? 이건 좀 다른데?” 싶은 쪽임.",
+                "더위 많이 타는 사람은\n이런 거 한 번 써보면\n여름 외출 기준이 좀 바뀔 수도 있음.",
+            ]
+        )
+    if _has_any(context, ("썬쉐이드", "선루프", "차광", "햇빛", "그늘")):
+        return "\n\n".join(
+            [
+                "여름에 차 타자마자\n머리 위부터 뜨겁다고 느껴본 사람은\n이거 그냥 못 지나칠 수 있음.",
+                "처음엔 햇빛 좀 들어오는 정도라고 생각하는데\n어느 순간 차 안 공기가 다르게 느껴짐.",
+                "차는 멀쩡한데\n천장이 먼저 계절을 알려주는 순간이 있음.",
+            ]
+        )
+    if _has_any(context, ("강아지", "반려", "펫", "물티슈", "산책", "하네스")):
+        return "\n\n".join(
+            [
+                "산책 다녀와서\n집 들어가기 직전에 제일 난감한 순간이 있음.",
+                "그냥 대충 넘기려다가도\n발바닥이랑 털 한 번 보면\n갑자기 마음이 바뀜.",
+                "외출 가방에 이런 거 하나 있으면\n그 찝찝한 몇 초가 꽤 달라짐.",
+            ]
+        )
+    if _has_any(context, ("우산", "레인", "부츠", "장마", "방수")):
+        return "\n\n".join(
+            [
+                "비 오는 날엔\n집 나서기 전에 이미 승부가 나는 물건들이 있음.",
+                "없을 땐 그냥 참으면 된다고 생각하는데\n한 번 제대로 젖고 나면 기준이 바뀜.",
+                "장마철엔 작은 불편이 하루 기분을 통째로 끌고 감.",
+            ]
+        )
+    return "\n\n".join(
+        [
+            "이거 처음 보면\n대부분 “굳이?” 쪽으로 생각할 수 있음.",
+            "근데 막상 필요한 상황이 오면\n그때부터는 계속 머릿속에 남는 종류임.",
+            "별거 아닌 것처럼 보이는데\n한 번 신경 쓰이기 시작하면 은근히 크게 느껴짐.",
+        ]
+    )
+
+
+def _has_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term.lower() in text for term in terms)
 
 
 def _threads_detail_sentence(product_name: str, facts: list[str]) -> str:

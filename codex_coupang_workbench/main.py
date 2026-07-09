@@ -20,6 +20,7 @@ from .coupang_partners import (
     resolve_coupang_redirect,
 )
 from .codex_threads import CodexThreadsError, DEFAULT_CODEX_MODEL, generate_codex_threads_post
+from .local_chrome import LocalChromeError, fetch_chrome_product_context
 from .naver import publish_handoff_message
 from .product_research import fetch_best_product_context
 from .schemas import (
@@ -183,7 +184,7 @@ def enrich_partner_product_with_local_context(
         return product
     context = fetch_best_product_context(resolved_url or original_url, product_name or product.product_name)
     return CoupangPartnerProduct(
-        product_name=product.product_name or context.page_title,
+        product_name=product.product_name or product_name.strip() or context.page_title,
         product_url=product.product_url or resolved_url or context.resolved_url,
         partner_url=product.partner_url,
         image_url=product.image_url or context.image_url,
@@ -234,6 +235,34 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             )
         except ThreadsBridgeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    def refresh_threads_record_insights(
+        job_id: str,
+        settings: dict[str, str],
+        store: WorkbenchStore,
+    ) -> dict[str, Any]:
+        job = store.get_job(job_id)
+        if job is None or job.get("status") != "THREADS_PUBLISHED":
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        post_id = str(job.get("threads_post_id") or "").strip()
+        profile_key = str(job.get("threads_profile_key") or "").strip()
+        if not post_id or not profile_key:
+            raise HTTPException(status_code=400, detail="Threads publish record is missing post or profile data")
+        profile = store.get_threads_profile(profile_key, include_token=True)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Threads profile not found")
+        if not profile.get("is_connected"):
+            raise HTTPException(status_code=400, detail="Threads profile is not connected")
+        try:
+            insights = get_threads_client(settings).fetch_media_insights(post_id, profile["access_token"])
+        except ThreadsApiError as exc:
+            store.update_threads_insights(job_id, {}, error=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        store.update_threads_insights(job_id, insights)
+        record = store.get_threads_publish_record(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        return record
 
     def require_threads_bridge_access(settings: dict[str, str], request: Request) -> None:
         expected_api_key = os.environ.get(THREADS_BRIDGE_API_KEY_ENV, "").strip()
@@ -312,6 +341,25 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             original_url=product_url,
             resolved_url=resolved_url or product_url,
             fallback_product_name=product_name if product.partner_url else "",
+        )
+
+    @app.post("/api/coupang/chrome-product-context")
+    def chrome_coupang_product_context(payload: CoupangProductPreviewPayload) -> dict[str, Any]:
+        product_url = payload.product_url.strip()
+        try:
+            context = fetch_chrome_product_context(product_url)
+        except LocalChromeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        product = CoupangPartnerProduct(
+            product_name=context.page_title,
+            product_url=context.resolved_url or product_url,
+            image_url=context.image_url,
+            facts=tuple(context.facts or ()),
+        )
+        return product_preview_response(
+            product,
+            original_url=product_url,
+            resolved_url=context.resolved_url or product_url,
         )
 
     @app.post("/api/coupang/deeplink")
@@ -508,6 +556,21 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         require_threads_bridge_access(settings, request)
         return store.list_threads_publish_records()
 
+    @app.post("/api/threads/publish-records/{job_id}/insights")
+    def refresh_threads_publish_record_insights(
+        job_id: str,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).refresh_record_insights(job_id)
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
+        return refresh_threads_record_insights(job_id, settings, store)
+
     @app.post("/api/threads/media")
     def upload_threads_media(
         payload: ThreadsMediaUploadPayload,
@@ -543,6 +606,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 product_url=payload.product_url,
                 product_facts=payload.facts,
                 variant=payload.variant,
+                prompt=payload.prompt,
             )
         except CodexImageError as exc:
             raise HTTPException(status_code=502, detail=f"Codex image generation failed: {exc}") from None
@@ -789,6 +853,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 product_facts=product_context.facts or [],
                 memo=payload.memo,
                 persona=settings.get("writer_persona", ""),
+                prompt=payload.codex_threads_prompt,
             )
         except CodexThreadsError:
             pass

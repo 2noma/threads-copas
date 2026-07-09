@@ -108,9 +108,10 @@ sinabroinfo</textarea>
             </label>
             <label class="wide">
               쿠팡 URL
-              <div class="input-action-row">
+              <div class="input-action-row two-actions">
                 <input name="product_url" required placeholder="https://link.coupang.com/a/..." />
                 <button class="small-button" id="coupang-preview-button" type="button">확인</button>
+                <button class="small-button" id="coupang-chrome-preview-button" type="button">Chrome 확인</button>
               </div>
             </label>
             <label class="wide">
@@ -126,8 +127,16 @@ sinabroinfo</textarea>
             </label>
             <div class="wide product-preview" id="coupang-product-preview" hidden></div>
             <label class="wide">
+              Codex 본문 프롬프트
+              <textarea name="codex_threads_prompt" rows="10" autocomplete="off" placeholder="상품 확인 후 자동 입력됩니다."></textarea>
+            </label>
+            <div class="wide form-actions">
+              <button class="small-button" id="codex-threads-prompt-button" type="button">본문 프롬프트 다시 만들기</button>
+              <span id="codex-threads-prompt-message" class="inline-message"></span>
+            </div>
+            <label class="wide">
               Codex 이미지 프롬프트
-              <textarea name="codex_image_prompt" rows="7" autocomplete="off" readonly placeholder="상품 확인 후 Codex 이미지 프롬프트 만들기를 누르세요."></textarea>
+              <textarea name="codex_image_prompt" rows="9" autocomplete="off" placeholder="상품 확인 후 자동 입력됩니다."></textarea>
             </label>
             <div class="wide form-actions">
               <button class="small-button" id="codex-image-prompt-button" type="button">Codex 이미지 프롬프트 만들기</button>
@@ -135,7 +144,7 @@ sinabroinfo</textarea>
             </div>
             <label class="wide">
               Codex 후킹 이미지 Base64
-              <textarea name="generated_image_base64" rows="4" autocomplete="off" placeholder="비워두면 Generate Thread에서 Codex CLI가 실사 후킹 이미지를 자동 생성합니다. 직접 만든 이미지를 쓰려면 base64 또는 data:image/png;base64,... 값을 붙여넣으세요."></textarea>
+              <textarea name="generated_image_base64" rows="4" autocomplete="off" placeholder="비워두면 Generate Thread에서 Codex CLI가 AI 일러스트 후킹 이미지를 자동 생성합니다. 직접 만든 이미지를 쓰려면 base64 또는 data:image/png;base64,... 값을 붙여넣으세요."></textarea>
             </label>
             <label class="wide">
               후킹 이미지 URL
@@ -189,11 +198,18 @@ sinabroinfo</textarea>
                   <th>상품</th>
                   <th>발행 프로필</th>
                   <th>Threads Post ID</th>
+                  <th>조회수</th>
+                  <th>좋아요</th>
+                  <th>댓글</th>
+                  <th>리포스트</th>
+                  <th>인용</th>
+                  <th>공유</th>
+                  <th>지표</th>
                 </tr>
               </thead>
               <tbody id="records-body">
                 <tr>
-                  <td colspan="4" class="empty-cell">No publish records yet.</td>
+                  <td colspan="11" class="empty-cell">No publish records yet.</td>
                 </tr>
               </tbody>
             </table>
@@ -202,6 +218,6 @@ sinabroinfo</textarea>
       </main>
     </div>
 
-    <script src="static/app.js?v=20260708-codex-image"></script>
+    <script src="static/app.js?v=20260709-insights"></script>
   </body>
 </html>

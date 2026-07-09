@@ -21,6 +21,7 @@ def generate_codex_threads_post(
     product_facts: list[str] | None = None,
     memo: str = "",
     persona: str = "",
+    prompt: str = "",
     model: str = DEFAULT_CODEX_MODEL,
     timeout: float = 90.0,
 ) -> str:
@@ -47,7 +48,8 @@ def generate_codex_threads_post(
     try:
         subprocess.run(
             command,
-            input=_build_codex_prompt(
+            input=prompt.strip()
+            or _build_codex_prompt(
                 product_name=product_name,
                 product_url=product_url,
                 product_facts=product_facts or [],
@@ -72,7 +74,7 @@ def generate_codex_threads_post(
         raise CodexThreadsError("Codex output could not be read") from exc
     if not text:
         raise CodexThreadsError("Codex did not return a Threads post")
-    return _normalize_generated_post(text, product_url)
+    return _normalize_generated_post(text, product_url, product_name)
 
 
 def _build_codex_prompt(
@@ -91,9 +93,9 @@ def _build_codex_prompt(
             "최종 답변에는 게시글 본문만 출력해. 설명, 마크다운 코드블록, 주석은 쓰지 마.",
             "",
             "스타일:",
-            "- 이전 채팅방에서 링크를 주면 자연스럽게 써주던 느낌으로 작성",
-            "- 사람이 직접 골라보는 듯한 짧은 문단",
-            "- 광고 티가 과하게 나지 않는 말투",
+            "- 상품 설명이 아니라 사람들이 멈칫하고 댓글을 열어보고 싶게 만드는 Threads 본문",
+            "- 짧은 문장과 짧은 문단, 살짝 찝찝하거나 궁금한 상황 후킹",
+            "- 방금 본 예시처럼 '이거 뭐지?', '왜 신경 쓰이지?' 느낌",
             f"- 작성자 톤: {persona_line}",
             "",
             "반드시 지킬 것:",
@@ -103,12 +105,15 @@ def _build_codex_prompt(
             "- 가격, 할인율, 배송일, 재고, 리뷰 수는 쓰지 않기",
             "- 입력에 없는 효과, 인증, 성능, 호환 모델은 지어내지 않기",
             "- bullet 목록 금지",
+            "- 상품명은 본문에 직접 쓰지 마. 브랜드명, 모델명, 정확한 상품명 노출 금지",
+            "- 상품 카테고리와 사용 상황만 암시하기",
+            "- 설명문처럼 쓰지 마. 사양, 구성, 장점 나열 금지",
+            "- 구매 전 같은 표현 쓰지 마. '확인해보세요', '추천', '필요한 분', '비교해볼 만' 같은 문구도 쓰지 마",
             "- 사람들이 해당 상품이 뭔지 궁금해지게 작성하기",
-            "- 350자 이내",
-            "- 상품명은 필요하면 자연스럽게 한 번만 언급하기",
-            "- 사용 장면, 궁금증 유도, 구매 전 확인 포인트 포함",
+            "- 2~4개 짧은 문단, 280자 이내",
+            "- 질문, 의외의 순간, 한 번 신경 쓰이면 계속 거슬리는 감정 중 하나를 반드시 넣기",
             "",
-            f"상품명: {product_name.strip() or '상품명 자동 확인 필요'}",
+            f"내부 참고용 상품명: {product_name.strip() or '상품명 자동 확인 필요'}",
             f"쿠팡 URL: {product_url.strip()}",
             "상품 정보:",
             facts,
@@ -117,13 +122,16 @@ def _build_codex_prompt(
     )
 
 
-def _normalize_generated_post(text: str, product_url: str) -> str:
+def _normalize_generated_post(text: str, product_url: str, product_name: str = "") -> str:
     clean_text = text.strip().strip("`")
     clean_url = product_url.strip()
+    clean_name = product_name.strip()
     if DISCLOSURE in clean_text:
         clean_text = clean_text.replace(DISCLOSURE, "")
     if clean_url:
         clean_text = clean_text.replace(clean_url, "")
+    if clean_name:
+        clean_text = clean_text.replace(clean_name, "")
     clean_text = clean_text.replace("#쿠팡파트너스", "")
     clean_text = "\n".join(
         line.rstrip()
@@ -138,5 +146,7 @@ def _should_drop_generated_line(line: str) -> bool:
     if clean_line.startswith("#"):
         return True
     if "댓글" in clean_line and any(term in clean_line for term in ("남겨", "남길", "확인", "링크", "자세한")):
+        return True
+    if any(term in clean_line for term in ("구매 전", "확인해보세요", "추천", "비교해볼 만", "필요한 분")):
         return True
     return False

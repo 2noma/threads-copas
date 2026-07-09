@@ -151,9 +151,12 @@ Codex Model = gpt-5.5
 1. 발행 프로필을 선택합니다.
 2. 쿠팡 URL을 붙여넣습니다.
 3. `확인`을 눌러 상품명과 딥링크를 확인합니다.
-4. `Generate Thread`를 누릅니다.
-5. 후킹 이미지가 비어 있으면 앱이 Codex CLI로 상품 카테고리를 자연스럽게 사용하는 실사 이미지를 생성하고, 업로드용 JPEG로 압축해 AWS에 업로드합니다.
-6. `발행 이미지` 미리보기에 이미지가 표시되는지 확인합니다.
+4. 상품명이 비어 있으면 `Chrome 확인`을 눌러 로컬 Google Chrome 세션에서 상품명을 읽어옵니다.
+5. `Generate Thread`를 누릅니다.
+6. 후킹 이미지가 비어 있으면 앱이 Codex CLI로 상품 카테고리를 자연스럽게 사용하는 AI 일러스트 이미지를 생성하고, `AI 일러스트` 라벨을 합성한 뒤 업로드용 JPEG로 압축해 AWS에 업로드합니다.
+7. `발행 이미지` 미리보기에 이미지가 표시되는지 확인합니다.
+
+`Chrome 확인`은 macOS 로컬 실행 전용 기능입니다. 쿠팡이 서버 요청이나 새 자동화 브라우저를 막아도, 사용자가 평소 쓰는 Google Chrome 프로필에서 쿠팡 상품 페이지가 열리면 `h1` 또는 페이지 제목에서 상품명을 가져옵니다. 처음 실행할 때 macOS가 터미널 또는 Python의 Chrome 제어 권한을 물을 수 있습니다.
 
 이미지를 쓰지 않을 상품이면 `이미지 없이 글만 만들기`를 켠 뒤 `Generate Thread`를 누릅니다. 이 경우 Codex 이미지 생성, 이미지 업로드, Threads 이미지 발행을 모두 건너뛰고 본문과 댓글만 만듭니다.
 
@@ -168,7 +171,8 @@ Threads 게시 이미지는 기본적으로 사용하지 않습니다.
 
 - 쿠팡 상품 이미지는 게시 이미지로 자동 사용하지 않습니다.
 - AI로 실제 상품처럼 보이는 이미지는 기본 제외합니다.
-- `Generate Thread` 시점에 앱이 Codex CLI로 실사 라이프스타일 후킹 PNG를 자동으로 만듭니다.
+- `Generate Thread` 시점에 앱이 Codex CLI로 AI 일러스트 후킹 PNG를 자동으로 만듭니다.
+- 자동 생성 이미지에는 업로드 전 `AI 일러스트` 라벨을 합성합니다.
 - 이미지는 상품명과 수집된 상품 정보에서 카테고리와 사용 장면을 추론해 만듭니다.
 - `이미지 다시 만들기`는 기존 이미지 URL을 지우고 다른 variation seed로 새 이미지를 생성합니다.
 - 직접 만든 이미지를 쓰고 싶으면 `Codex 후킹 이미지 Base64`에 붙여넣으면 됩니다.
@@ -206,12 +210,24 @@ Threads 게시 이미지는 기본적으로 사용하지 않습니다.
 - 발행 프로필
 - Threads username
 - Threads post ID
+- 조회수
+- 좋아요
+- 댓글 수
+- 리포스트 수
+- 인용 수
+- 공유 수
+- 지표 마지막 갱신 시각
 - 실제 발행 본문과 댓글 문구
+
+각 기록의 `지표 새로고침`을 누르면 AWS Threads API 서버가 Meta Threads Insights API를 호출해 최신 지표를 저장하고 화면에 반영합니다.
+
+지표 조회에는 Meta 앱 OAuth scope `threads_manage_insights`가 필요합니다. 이 권한을 추가하기 전에 연결한 프로필은 `Import Current Account`로 다시 연결해야 지표 조회 권한이 토큰에 포함됩니다.
 
 발행 기록 API:
 
 ```text
 GET /api/threads/publish-records
+POST /api/threads/publish-records/{job_id}/insights
 ```
 
 ## 토큰 갱신
@@ -225,6 +241,7 @@ Threads 토큰은 만료될 수 있으므로 주기적으로 갱신해야 합니
 - 발행은 자동으로 실행되지 않습니다. 반드시 `Publish to Threads` 버튼을 눌러야 합니다.
 - 쿠팡 파트너스 고지 문구와 링크는 본문이 아니라 댓글에 포함됩니다.
 - 가격, 배송일, 리뷰 수처럼 자주 바뀌는 정보는 글에서 제외하도록 생성됩니다.
+- 쿠팡 상품명이 자동 확인되지 않으면 로컬 앱에서 `Chrome 확인`을 먼저 시도하고, 그래도 실패하면 `상품명 직접 입력`을 사용하세요.
 - Threads App Secret은 AWS 환경변수에만 둡니다.
 - Threads Access Token과 발행 기록은 AWS SQLite DB에 저장됩니다.
 - AWS 서버에는 반드시 `THREADS_BRIDGE_API_KEY`를 설정하고, 로컬에는 같은 값을 `Threads Service API Key`로 저장하세요.

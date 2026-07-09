@@ -218,6 +218,10 @@ select:focus {
   gap: 8px;
 }
 
+.input-action-row.two-actions {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
 button {
   border: 1px solid #c8d4dd;
   background: #ffffff;

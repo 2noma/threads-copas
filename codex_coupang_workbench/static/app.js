@@ -188,6 +188,7 @@ async function previewCoupangProduct() {
     }
     renderProductPreview();
     $("#selected-product-label").textContent = preview.product_name || form.elements.product_name.value.trim() || "상품명 직접 입력 필요";
+    populateCodexPrompts({ silent: true });
     if (preview.needs_product_name) {
       message.textContent = "딥링크 생성 완료. 상품명을 직접 입력하면 글을 만들 수 있습니다.";
     } else {
@@ -200,6 +201,38 @@ async function previewCoupangProduct() {
   } finally {
     setBusy(false);
   }
+}
+
+async function previewCoupangProductWithChrome() {
+  const form = $("#threads-draft-form");
+  const message = $("#coupang-preview-message");
+  const productUrl = form.elements.product_url.value.trim();
+  if (!productUrl) {
+    message.textContent = "쿠팡 URL을 입력하세요.";
+    return;
+  }
+  setBusy(true);
+  try {
+    message.textContent = "로컬 Chrome에서 상품명 확인 중...";
+    const context = await api("/api/coupang/chrome-product-context", {
+      method: "POST",
+      body: JSON.stringify({
+        product_url: productUrl,
+      }),
+    });
+    if (context.product_name) {
+      form.elements.product_name.value = context.product_name;
+      $("#selected-product-label").textContent = context.product_name;
+    }
+    message.textContent = "Chrome 확인 완료. 딥링크 생성 중...";
+  } catch (error) {
+    console.error(error);
+    message.textContent = error.message || "Chrome에서 상품명을 확인하지 못했습니다.";
+    return;
+  } finally {
+    setBusy(false);
+  }
+  await previewCoupangProduct();
 }
 
 async function createCoupangDeeplink() {
@@ -311,13 +344,23 @@ function productFactsForHookImage() {
   return Array.isArray(state.productPreview?.facts) ? state.productPreview.facts : [];
 }
 
+function productPromptContext() {
+  const form = $("#threads-draft-form");
+  const productName = form.elements.product_name.value.trim() || state.productPreview?.product_name || "";
+  const productUrl = form.elements.partner_url.value.trim() || form.elements.product_url.value.trim();
+  const facts = productFactsForHookImage().filter(Boolean).slice(0, 6);
+  const factLines = facts.length ? facts.map((fact) => `- ${fact}`).join("\n") : "- 자동 수집된 상세 정보 없음";
+  return { form, productName, productUrl, factLines };
+}
+
 async function generateAutoHookImage(form, options = {}) {
   const message = $("#threads-media-message");
   const productName = form.elements.product_name.value.trim() || state.productPreview?.product_name || "";
   if (!productName) {
     throw new Error("상품명을 확인한 뒤 후킹 이미지를 만들 수 있습니다.");
   }
-  message.textContent = options.status || "Codex로 실사 후킹 이미지 생성 중... 1분 정도 걸릴 수 있습니다.";
+  syncImagePromptVariant(form);
+  message.textContent = options.status || "Codex로 AI 일러스트 후킹 이미지 생성 중... 몇 분 정도 걸릴 수 있습니다.";
   const generated = await api("/api/threads/auto-hook-image", {
     method: "POST",
     body: JSON.stringify({
@@ -325,6 +368,7 @@ async function generateAutoHookImage(form, options = {}) {
       product_name: productName,
       facts: productFactsForHookImage(),
       variant: state.hookImageVariant,
+      prompt: form.elements.codex_image_prompt.value.trim(),
     }),
   });
   form.elements.hook_image_url.value = generated.image_url || "";
@@ -334,6 +378,15 @@ async function generateAutoHookImage(form, options = {}) {
   message.textContent = "후킹 이미지 준비 완료";
   clearMessage(message);
   return generated.image_url || "";
+}
+
+function syncImagePromptVariant(form) {
+  const prompt = form.elements.codex_image_prompt.value.trim();
+  if (!prompt) return;
+  const seedLine = `- variation seed: ${state.hookImageVariant}`;
+  form.elements.codex_image_prompt.value = /^- variation seed: \d+$/m.test(prompt)
+    ? prompt.replace(/^- variation seed: \d+$/m, seedLine)
+    : `${prompt}\n${seedLine}`;
 }
 
 async function regenerateHookImage() {
@@ -355,7 +408,7 @@ async function regenerateHookImage() {
   renderThreadImagePreview();
   setBusy(true);
   try {
-    await generateAutoHookImage(form, { status: "Codex로 실사 이미지 다시 생성 중... 1분 정도 걸릴 수 있습니다." });
+    await generateAutoHookImage(form, { status: "Codex로 AI 일러스트 이미지 다시 생성 중... 몇 분 정도 걸릴 수 있습니다." });
   } catch (error) {
     console.error(error);
     state.hookImageVariant = previousVariant;
@@ -382,33 +435,101 @@ function clearHookImageForTextOnly(form) {
   renderThreadImagePreview();
 }
 
-function createCodexImagePrompt() {
-  const form = $("#threads-draft-form");
-  const message = $("#codex-image-prompt-message");
-  const productName = form.elements.product_name.value.trim() || state.productPreview?.product_name || "";
+function createCodexThreadsPrompt(options = {}) {
+  const { form, productName, productUrl, factLines } = productPromptContext();
+  const message = $("#codex-threads-prompt-message");
   if (!state.productPreview || !productName) {
-    message.textContent = "먼저 상품 확인을 완료하세요.";
-    return;
+    if (!options.silent) message.textContent = "먼저 상품 확인을 완료하세요.";
+    return false;
   }
-  const facts = Array.isArray(state.productPreview.facts) ? state.productPreview.facts.filter(Boolean).slice(0, 5) : [];
-  const factLines = facts.length ? facts.map((fact) => `- ${fact}`).join("\n") : "- 상품 상세 팩트 없음";
-  form.elements.codex_image_prompt.value = [
-    "Threads에 올릴 1:1 정사각형 실사 후킹 이미지를 만들어줘.",
+  form.elements.codex_threads_prompt.value = [
+    "Codex CLI에 로그인된 계정 인증을 사용해 쿠팡 파트너스 Threads 게시글을 작성해줘.",
+    "최종 답변에는 게시글 본문만 출력해. 설명, 마크다운 코드블록, 주석은 쓰지 마.",
     "",
-    "상품 맥락은 참고만 해:",
-    `- 상품명: ${productName}`,
+    "스타일:",
+    "- 상품 설명이 아니라 사람들이 멈칫하고 댓글을 열어보고 싶게 만드는 Threads 본문",
+    "- 짧은 문장과 짧은 문단, 살짝 찝찝하거나 궁금한 상황 후킹",
+    "- 방금 본 예시처럼 '이거 뭐지?', '왜 신경 쓰이지?' 느낌",
+    "- 작성자 톤: 친근하고 실사용 관점이 있는 한국어 Threads 작성자",
+    "",
+    "반드시 지킬 것:",
+    "- 링크와 고지 문구는 본문에 쓰지 마. 링크와 고지는 별도 댓글에 들어간다.",
+    "- '자세한 건 댓글에 남겨둘게요' 같은 댓글 안내 문장 쓰지 않기",
+    "- 해시태그 쓰지 않기",
+    "- 가격, 할인율, 배송일, 재고, 리뷰 수는 쓰지 않기",
+    "- 입력에 없는 효과, 인증, 성능, 호환 모델은 지어내지 않기",
+    "- bullet 목록 금지",
+    "- 상품명은 본문에 직접 쓰지 마. 브랜드명, 모델명, 정확한 상품명 노출 금지",
+    "- 상품 카테고리와 사용 상황만 암시하기",
+    "- 설명문처럼 쓰지 마. 사양, 구성, 장점 나열 금지",
+    "- 구매 전 같은 표현 쓰지 마. '확인해보세요', '추천', '필요한 분', '비교해볼 만' 같은 문구도 쓰지 마",
+    "- 사람들이 해당 상품이 뭔지 궁금해지게 작성하기",
+    "- 2~4개 짧은 문단, 280자 이내",
+    "- 질문, 의외의 순간, 한 번 신경 쓰이면 계속 거슬리는 감정 중 하나를 반드시 넣기",
+    "",
+    `내부 참고용 상품명: ${productName}`,
+    `쿠팡 URL: ${productUrl}`,
+    "상품 정보:",
     factLines,
-    "",
-    "이미지 조건:",
-    "- 상품 카테고리를 자연스럽게 사용하는 실사 라이프스타일 장면",
-    "- 실제 상품, 유사 상품, 포장, 박스, 쇼핑앱 화면, 가격표, 영수증은 절대 보이지 않게",
-    "- 브랜드명, 로고, 워터마크, readable text 없이",
-    "- 광고 이미지처럼 보이지 않게",
-    "- 사람들이 무슨 상황인지 궁금해서 댓글을 열어보고 싶게",
-    "- 자연광, 현실적인 사진 느낌, 깔끔한 구도",
+    "사용자 메모: 없음",
   ].join("\n");
-  message.textContent = "프롬프트 준비 완료";
-  clearMessage(message);
+  if (!options.silent) {
+    message.textContent = "본문 프롬프트 준비 완료";
+    clearMessage(message);
+  }
+  return true;
+}
+
+function createCodexImagePrompt(options = {}) {
+  const { form, productName, productUrl, factLines } = productPromptContext();
+  const message = $("#codex-image-prompt-message");
+  if (!state.productPreview || !productName) {
+    if (!options.silent) message.textContent = "먼저 상품 확인을 완료하세요.";
+    return false;
+  }
+  form.elements.codex_image_prompt.value = [
+    "Use the image generation tool to create one Threads hook image.",
+    "Save the generated bitmap as output.png in the current directory.",
+    "Do not draw the image with code. Do not use stock image search. Use image generation.",
+    "",
+    "Goal:",
+    "- 상품명을 보고 카테고리와 사용 상황을 추론한다.",
+    "- 상품 카테고리를 자연스럽게 사용하는 장면을 만든다.",
+    "- AI 일러스트임이 분명한 non-photorealistic hook image를 만든다.",
+    "- fictional stylized characters only. 실제 인물처럼 보이지 않게 만든다.",
+    "- 1:1 square composition suitable for Threads preview.",
+    "",
+    "Must avoid:",
+    "- 실제 쿠팡 상품 이미지, 포장, 박스, 쇼핑앱 화면",
+    "- 브랜드명, 로고, readable text, 가격표, 워터마크",
+    "- 제품을 광고처럼 정면 배치한 카탈로그 컷",
+    "- 실사, 사진, 실제 인플루언서/사용 후기처럼 보이는 연출",
+    "- 입력에 없는 효능이나 성능을 암시하는 장면",
+    "- No text in the image. 앱이 업로드 전에 AI 일러스트 라벨을 직접 추가한다.",
+    "",
+    "Creative direction:",
+    "- 현대적인 에디토리얼 일러스트, semi-flat digital painting, soft shading",
+    "- 사람이나 생활 공간 중심의 자연스러운 사용 장면",
+    "- 상품 자체가 특정 브랜드처럼 보이지 않게 일반적인 카테고리 소품으로만 표현",
+    "- 사용자가 '이 상황 뭐지?' 하고 댓글을 열어보고 싶을 정도의 생활감",
+    "- 안전하고 일상적인 장면, 과장되더라도 성능 주장처럼 보이지 않게",
+    `- variation seed: ${state.hookImageVariant}`,
+    "",
+    `상품명: ${productName}`,
+    `상품 URL: ${productUrl}`,
+    "상품 정보:",
+    factLines,
+  ].join("\n");
+  if (!options.silent) {
+    message.textContent = "이미지 프롬프트 준비 완료";
+    clearMessage(message);
+  }
+  return true;
+}
+
+function populateCodexPrompts(options = {}) {
+  createCodexThreadsPrompt(options);
+  createCodexImagePrompt(options);
 }
 
 async function generateDraft(event) {
@@ -441,6 +562,7 @@ async function generateDraft(event) {
     message.textContent = "generating...";
     const payload = formToObject(form);
     delete payload.generated_image_base64;
+    delete payload.codex_image_prompt;
     payload.skip_hook_image = shouldSkipHookImage(form);
     if (payload.skip_hook_image) {
       payload.hook_image_url = "";
@@ -515,6 +637,27 @@ async function refreshProfiles() {
 async function refreshRecords() {
   state.records = await api("/api/threads/publish-records");
   renderRecords();
+}
+
+async function refreshRecordInsights(jobId) {
+  const message = $("#threads-publish-message");
+  if (!jobId) return;
+  setBusy(true);
+  try {
+    message.textContent = "지표 새로고침 중...";
+    const updated = await api(`/api/threads/publish-records/${encodeURIComponent(jobId)}/insights`, {
+      method: "POST",
+    });
+    state.records = state.records.map((record) => (record.job_id === updated.job_id ? updated : record));
+    renderRecords();
+    message.textContent = "지표 업데이트 완료";
+    clearMessage(message);
+  } catch (error) {
+    console.error(error);
+    message.textContent = error.message || "지표를 가져오지 못했습니다.";
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function refreshAll() {
@@ -656,13 +799,15 @@ function renderRecords() {
   $("#record-count").textContent = `${state.records.length} records`;
   const body = $("#records-body");
   if (state.records.length === 0) {
-    body.innerHTML = '<tr><td colspan="4" class="empty-cell">No publish records yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="11" class="empty-cell">No publish records yet.</td></tr>';
     return;
   }
   body.innerHTML = state.records
     .map((record) => {
       const profileName = record.display_name || record.profile_key || "";
       const username = record.username ? `@${record.username}` : "";
+      const insightsAt = record.threads_insights_at ? `갱신 ${record.threads_insights_at}` : "지표 미갱신";
+      const insightsError = record.threads_insights_error || "";
       return `
         <tr>
           <td>${escapeHtml(record.threads_published_at || "")}</td>
@@ -675,10 +820,27 @@ function renderRecords() {
             ${username ? `<span class="link-text">${escapeHtml(username)}</span>` : ""}
           </td>
           <td><span class="link-text">${escapeHtml(record.threads_post_id || "")}</span></td>
+          <td>${formatMetric(record.threads_views)}</td>
+          <td>${formatMetric(record.threads_likes)}</td>
+          <td>${formatMetric(record.threads_replies)}</td>
+          <td>${formatMetric(record.threads_reposts)}</td>
+          <td>${formatMetric(record.threads_quotes)}</td>
+          <td>${formatMetric(record.threads_shares)}</td>
+          <td>
+            <button class="small-button" type="button" data-action="refresh-insights" data-job-id="${escapeAttribute(record.job_id || "")}">지표 새로고침</button>
+            <span class="link-text">${escapeHtml(insightsAt)}</span>
+            ${insightsError ? `<span class="link-text">${escapeHtml(insightsError)}</span>` : ""}
+          </td>
         </tr>
       `;
     })
     .join("");
+}
+
+function formatMetric(value) {
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) return "0";
+  return number.toLocaleString("ko-KR");
 }
 
 function setBusy(isBusy) {
@@ -727,6 +889,7 @@ function bindEvents() {
   $("#settings-form").elements.coupang_channel_ids.addEventListener("input", syncCoupangChannelIds);
   $("#threads-import-button").addEventListener("click", importCurrentProfile);
   $("#coupang-preview-button").addEventListener("click", previewCoupangProduct);
+  $("#coupang-chrome-preview-button").addEventListener("click", previewCoupangProductWithChrome);
   $("#coupang-deeplink-button").addEventListener("click", createCoupangDeeplink);
   const draftForm = $("#threads-draft-form");
   draftForm.elements.product_url.addEventListener("input", () => {
@@ -740,6 +903,7 @@ function bindEvents() {
     draftForm.elements.image_url.value = "";
     draftForm.elements.hook_image_url.value = "";
     draftForm.elements.generated_image_base64.value = "";
+    draftForm.elements.codex_threads_prompt.value = "";
     draftForm.elements.codex_image_prompt.value = "";
     draftForm.elements.partner_url.value = "";
     renderThreadImagePreview();
@@ -766,11 +930,17 @@ function bindEvents() {
     clearMessage(message);
   });
   draftForm.addEventListener("submit", generateDraft);
+  $("#codex-threads-prompt-button").addEventListener("click", createCodexThreadsPrompt);
   $("#codex-image-prompt-button").addEventListener("click", createCodexImagePrompt);
   $("#threads-media-upload-button").addEventListener("click", uploadGeneratedHookImage);
   $("#threads-auto-image-button").addEventListener("click", regenerateHookImage);
   $("#threads-publish-button").addEventListener("click", publishDraft);
   $("#refresh-button").addEventListener("click", refreshAll);
+  $("#records-body").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='refresh-insights']");
+    if (!button) return;
+    await refreshRecordInsights(button.dataset.jobId || "");
+  });
   $("#threads-profiles-list").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;

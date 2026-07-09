@@ -65,6 +65,7 @@ class ThreadsDraftPayload(BaseModel):
     hook_image_no_product: bool = False
     hook_image_permission_reviewed: bool = False
     skip_hook_image: bool = False
+    codex_threads_prompt: str = ""
     memo: str = ""
 
 
@@ -106,3 +107,4 @@ class ThreadsAutoHookImagePayload(BaseModel):
     product_name: str = ""
     facts: list[str] = Field(default_factory=list)
     variant: int = 0
+    prompt: str = ""

@@ -12,6 +12,13 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _safe_metric(value: Any) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 class WorkbenchStore:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
@@ -106,6 +113,14 @@ class WorkbenchStore:
             self._ensure_column(conn, "jobs", "threads_post_id", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_reply_id", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_published_at", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "jobs", "threads_views", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "jobs", "threads_likes", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "jobs", "threads_replies", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "jobs", "threads_reposts", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "jobs", "threads_quotes", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "jobs", "threads_shares", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "jobs", "threads_insights_at", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "jobs", "threads_insights_error", "TEXT NOT NULL DEFAULT ''")
 
     def _ensure_column(
         self,
@@ -609,6 +624,14 @@ class WorkbenchStore:
                     jobs.threads_post_id,
                     jobs.threads_reply_id,
                     jobs.threads_published_at,
+                    jobs.threads_views,
+                    jobs.threads_likes,
+                    jobs.threads_replies,
+                    jobs.threads_reposts,
+                    jobs.threads_quotes,
+                    jobs.threads_shares,
+                    jobs.threads_insights_at,
+                    jobs.threads_insights_error,
                     jobs.sns_final AS published_text,
                     threads_profiles.display_name,
                     threads_profiles.username
@@ -623,6 +646,40 @@ class WorkbenchStore:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_threads_publish_record(self, job_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    jobs.id AS job_id,
+                    jobs.product_name,
+                    jobs.product_url,
+                    jobs.threads_profile_key AS profile_key,
+                    jobs.threads_post_id,
+                    jobs.threads_reply_id,
+                    jobs.threads_published_at,
+                    jobs.threads_views,
+                    jobs.threads_likes,
+                    jobs.threads_replies,
+                    jobs.threads_reposts,
+                    jobs.threads_quotes,
+                    jobs.threads_shares,
+                    jobs.threads_insights_at,
+                    jobs.threads_insights_error,
+                    jobs.sns_final AS published_text,
+                    threads_profiles.display_name,
+                    threads_profiles.username
+                FROM jobs
+                LEFT JOIN threads_profiles
+                  ON threads_profiles.profile_key = jobs.threads_profile_key
+                WHERE jobs.id = ?
+                  AND jobs.status = 'THREADS_PUBLISHED'
+                  AND jobs.threads_post_id != ''
+                """,
+                (job_id,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def get_threads_profile(
         self,
@@ -737,6 +794,48 @@ class WorkbenchStore:
                 ),
             )
         self.add_log(job_id, "INFO", f"Threads published via {profile_key.strip()}")
+        job = self.get_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        return job
+
+    def update_threads_insights(
+        self,
+        job_id: str,
+        insights: dict[str, Any],
+        error: str = "",
+    ) -> dict[str, Any]:
+        now = utc_now()
+        clean_error = error.strip()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET threads_views = ?,
+                    threads_likes = ?,
+                    threads_replies = ?,
+                    threads_reposts = ?,
+                    threads_quotes = ?,
+                    threads_shares = ?,
+                    threads_insights_at = ?,
+                    threads_insights_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    _safe_metric(insights.get("views")),
+                    _safe_metric(insights.get("likes")),
+                    _safe_metric(insights.get("replies")),
+                    _safe_metric(insights.get("reposts")),
+                    _safe_metric(insights.get("quotes")),
+                    _safe_metric(insights.get("shares")),
+                    now if not clean_error else "",
+                    clean_error,
+                    now,
+                    job_id,
+                ),
+            )
+        self.add_log(job_id, "ERROR" if clean_error else "INFO", clean_error or "Threads insights refreshed")
         job = self.get_job(job_id)
         if job is None:
             raise KeyError(job_id)
