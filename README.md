@@ -146,6 +146,7 @@ POST /api/threads/remote-publish
 POST /api/threads/profiles/{profile_key}/refresh
 POST /api/threads/profiles/{profile_key}/disconnect
 POST /api/threads/publish-records/{job_id}/insights
+POST /api/threads/publish-records/{job_id}/permalink
 DELETE /api/threads/publish-records/{job_id}
 GET  /media/{filename}
 ```

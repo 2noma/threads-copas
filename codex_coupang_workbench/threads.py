@@ -152,6 +152,20 @@ class ThreadsApiClient:
         )
         return _normalize_insights_response(response, metrics)
 
+    def fetch_media_permalink(self, media_id: str, access_token: str) -> str:
+        clean_media_id = media_id.strip()
+        if not clean_media_id:
+            raise ThreadsApiError("Threads media id is required")
+        response = self._transport(
+            "GET",
+            f"{self.api_base_url}/{clean_media_id}",
+            params={
+                "fields": "permalink",
+                "access_token": access_token,
+            },
+        )
+        return str(response.get("permalink") or "").strip()
+
     def _publish_text_container(
         self,
         threads_user_id: str,

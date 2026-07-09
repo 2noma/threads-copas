@@ -112,6 +112,7 @@ class WorkbenchStore:
             self._ensure_column(conn, "jobs", "threads_profile_key", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_post_id", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_reply_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "jobs", "threads_permalink", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_published_at", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "threads_views", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "jobs", "threads_likes", "INTEGER NOT NULL DEFAULT 0")
@@ -623,6 +624,7 @@ class WorkbenchStore:
                     jobs.threads_profile_key AS profile_key,
                     jobs.threads_post_id,
                     jobs.threads_reply_id,
+                    jobs.threads_permalink,
                     jobs.threads_published_at,
                     jobs.threads_views,
                     jobs.threads_likes,
@@ -658,6 +660,7 @@ class WorkbenchStore:
                     jobs.threads_profile_key AS profile_key,
                     jobs.threads_post_id,
                     jobs.threads_reply_id,
+                    jobs.threads_permalink,
                     jobs.threads_published_at,
                     jobs.threads_views,
                     jobs.threads_likes,
@@ -788,6 +791,7 @@ class WorkbenchStore:
         profile_key: str,
         threads_post_id: str,
         threads_reply_id: str = "",
+        threads_permalink: str = "",
         published_text: str = "",
     ) -> dict[str, Any]:
         now = utc_now()
@@ -799,6 +803,7 @@ class WorkbenchStore:
                     threads_profile_key = ?,
                     threads_post_id = ?,
                     threads_reply_id = ?,
+                    threads_permalink = ?,
                     threads_published_at = ?,
                     sns_final = CASE WHEN ? != '' THEN ? WHEN sns_final = '' THEN sns_draft ELSE sns_final END,
                     updated_at = ?
@@ -808,6 +813,7 @@ class WorkbenchStore:
                     profile_key.strip(),
                     threads_post_id.strip(),
                     threads_reply_id.strip(),
+                    threads_permalink.strip(),
                     now,
                     published_text.strip(),
                     published_text.strip(),
@@ -816,6 +822,25 @@ class WorkbenchStore:
                 ),
             )
         self.add_log(job_id, "INFO", f"Threads published via {profile_key.strip()}")
+        job = self.get_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        return job
+
+    def update_threads_permalink(self, job_id: str, permalink: str) -> dict[str, Any]:
+        now = utc_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET threads_permalink = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND status = 'THREADS_PUBLISHED'
+                """,
+                (permalink.strip(), now, job_id),
+            )
+        self.add_log(job_id, "INFO", "Threads permalink refreshed")
         job = self.get_job(job_id)
         if job is None:
             raise KeyError(job_id)

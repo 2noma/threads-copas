@@ -99,6 +99,20 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             raise HTTPException(status_code=400, detail="image_base64 is not a valid WEBP image")
         return image_bytes, content_type
 
+    def fetch_threads_permalink(
+        client: ThreadsApiClient,
+        post_id: str,
+        access_token: str,
+        job_id: str,
+        store: WorkbenchStore,
+    ) -> str:
+        try:
+            return client.fetch_media_permalink(post_id, access_token)
+        except ThreadsApiError as exc:
+            store.add_log(job_id, "ERROR", f"Threads permalink refresh failed: {exc}")
+            logger.warning("Threads permalink refresh failed for %s: %s", post_id, exc)
+            return ""
+
     def publish_threads_job(
         *,
         job: dict[str, Any],
@@ -133,6 +147,7 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         post_id = str(published.get("id", "")).strip()
         if not post_id:
             raise HTTPException(status_code=400, detail="Threads publish response did not include an id")
+        permalink = fetch_threads_permalink(client, post_id, profile["access_token"], job["id"], store)
         clean_comment = comment_text.strip()
         reply_id = ""
         if clean_comment:
@@ -150,6 +165,7 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     profile_key=profile_key,
                     threads_post_id=post_id,
                     threads_reply_id="",
+                    threads_permalink=permalink,
                     published_text=f"본문:\n{text.strip()}\n\n댓글:\n{clean_comment}",
                 )
                 store.add_log(job["id"], "ERROR", error_detail)
@@ -170,12 +186,14 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             profile_key=profile_key,
             threads_post_id=post_id,
             threads_reply_id=reply_id,
+            threads_permalink=permalink,
             published_text=f"본문:\n{text.strip()}\n\n댓글:\n{clean_comment}" if clean_comment else text,
         )
         return {
             "status": "THREADS_PUBLISHED",
             "threads_post_id": post_id,
             "threads_reply_id": reply_id,
+            "threads_permalink": permalink,
             "job": updated_job,
         }
 
@@ -202,6 +220,30 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         if record is None:
             raise HTTPException(status_code=404, detail="Threads publish record not found")
         return record
+
+    def refresh_threads_record_permalink(job_id: str, store: WorkbenchStore) -> dict[str, Any]:
+        record = store.get_threads_publish_record(job_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        if record.get("threads_permalink"):
+            return record
+        post_id = str(record.get("threads_post_id") or "").strip()
+        profile_key = str(record.get("profile_key") or "").strip()
+        if not post_id or not profile_key:
+            raise HTTPException(status_code=400, detail="Threads publish record is missing post or profile data")
+        profile = store.get_threads_profile(profile_key, include_token=True)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Threads profile not found")
+        if not profile.get("is_connected"):
+            raise HTTPException(status_code=400, detail="Threads profile is not connected")
+        permalink = fetch_threads_permalink(get_threads_client(), post_id, profile["access_token"], job_id, store)
+        if not permalink:
+            raise HTTPException(status_code=400, detail="Threads permalink was not returned")
+        store.update_threads_permalink(job_id, permalink)
+        refreshed = store.get_threads_publish_record(job_id)
+        if refreshed is None:
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        return refreshed
 
     def delete_threads_record(job_id: str, store: WorkbenchStore) -> dict[str, Any]:
         if not store.delete_threads_publish_record(job_id):
@@ -265,6 +307,15 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     ) -> dict[str, Any]:
         require_bridge_access(request)
         return refresh_threads_record_insights(job_id, store)
+
+    @app.post("/api/threads/publish-records/{job_id}/permalink")
+    def refresh_threads_publish_record_permalink(
+        job_id: str,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        require_bridge_access(request)
+        return refresh_threads_record_permalink(job_id, store)
 
     @app.delete("/api/threads/publish-records/{job_id}")
     def delete_threads_publish_record(

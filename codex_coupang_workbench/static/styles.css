@@ -339,6 +339,22 @@ th {
   color: var(--danger);
 }
 
+.post-link-button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.post-link-button:hover {
+  text-decoration: underline;
+}
+
 .link-text {
   display: block;
   color: var(--muted);

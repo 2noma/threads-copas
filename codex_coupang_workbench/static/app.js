@@ -683,6 +683,46 @@ async function deletePublishRecord(jobId, productName) {
   }
 }
 
+async function openThreadsPost(jobId, permalink) {
+  const message = $("#threads-publish-message");
+  if (!jobId) return;
+  const popup = window.open("about:blank", "_blank");
+  if (popup) {
+    popup.opener = null;
+  }
+  setBusy(true);
+  try {
+    let targetUrl = permalink || "";
+    if (!targetUrl) {
+      message.textContent = "Threads 링크 확인 중...";
+      const updated = await api(`/api/threads/publish-records/${encodeURIComponent(jobId)}/permalink`, {
+        method: "POST",
+      });
+      targetUrl = updated.threads_permalink || "";
+      state.records = state.records.map((record) => (record.job_id === updated.job_id ? updated : record));
+      renderRecords();
+    }
+    if (!targetUrl) {
+      throw new Error("Threads post URL을 확인하지 못했습니다.");
+    }
+    if (popup) {
+      popup.location.href = targetUrl;
+    } else {
+      window.open(targetUrl, "_blank", "noopener,noreferrer");
+    }
+    message.textContent = "Threads 포스트를 새 창으로 열었습니다.";
+    clearMessage(message);
+  } catch (error) {
+    if (popup) {
+      popup.close();
+    }
+    console.error(error);
+    message.textContent = error.message || "Threads 포스트 링크를 열지 못했습니다.";
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function refreshAll() {
   await Promise.all([refreshProfiles(), refreshRecords()]);
 }
@@ -831,6 +871,10 @@ function renderRecords() {
       const username = record.username ? `@${record.username}` : "";
       const insightsAt = record.threads_insights_at ? `갱신 ${record.threads_insights_at}` : "지표 미갱신";
       const insightsError = record.threads_insights_error || "";
+      const postId = record.threads_post_id || "";
+      const postControl = postId
+        ? `<button class="post-link-button" type="button" data-action="open-post" data-job-id="${escapeAttribute(record.job_id || "")}" data-permalink="${escapeAttribute(record.threads_permalink || "")}">${escapeHtml(postId)}</button>`
+        : "";
       return `
         <tr>
           <td>${escapeHtml(record.threads_published_at || "")}</td>
@@ -842,7 +886,7 @@ function renderRecords() {
             <strong>${escapeHtml(profileName)}</strong>
             ${username ? `<span class="link-text">${escapeHtml(username)}</span>` : ""}
           </td>
-          <td><span class="link-text">${escapeHtml(record.threads_post_id || "")}</span></td>
+          <td>${postControl}</td>
           <td>${formatMetric(record.threads_views)}</td>
           <td>${formatMetric(record.threads_likes)}</td>
           <td>${formatMetric(record.threads_replies)}</td>
@@ -968,6 +1012,9 @@ function bindEvents() {
     }
     if (button.dataset.action === "delete-record") {
       await deletePublishRecord(button.dataset.jobId || "", button.dataset.productName || "");
+    }
+    if (button.dataset.action === "open-post") {
+      await openThreadsPost(button.dataset.jobId || "", button.dataset.permalink || "");
     }
   });
   $("#threads-profiles-list").addEventListener("click", async (event) => {
