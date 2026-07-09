@@ -203,6 +203,11 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             raise HTTPException(status_code=404, detail="Threads publish record not found")
         return record
 
+    def delete_threads_record(job_id: str, store: WorkbenchStore) -> dict[str, Any]:
+        if not store.delete_threads_publish_record(job_id):
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        return {"deleted": True, "job_id": job_id}
+
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "threads-api"}
@@ -260,6 +265,15 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     ) -> dict[str, Any]:
         require_bridge_access(request)
         return refresh_threads_record_insights(job_id, store)
+
+    @app.delete("/api/threads/publish-records/{job_id}")
+    def delete_threads_publish_record(
+        job_id: str,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        require_bridge_access(request)
+        return delete_threads_record(job_id, store)
 
     @app.post("/api/threads/profiles")
     def upsert_threads_profile(

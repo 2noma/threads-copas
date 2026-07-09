@@ -54,6 +54,10 @@ class ThreadsBridgeClient:
         )
         return _ensure_dict(response)
 
+    def delete_publish_record(self, job_id: str) -> dict[str, Any]:
+        response = self._request("DELETE", f"/api/threads/publish-records/{quote(job_id, safe='')}")
+        return _ensure_dict(response)
+
     def upsert_profile(self, profile_key: str, display_name: str, notes: str = "") -> dict[str, Any]:
         response = self._request(
             "POST",

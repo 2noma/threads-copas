@@ -681,6 +681,28 @@ class WorkbenchStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def delete_threads_publish_record(self, job_id: str) -> bool:
+        clean_job_id = job_id.strip()
+        if not clean_job_id:
+            return False
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM jobs
+                WHERE id = ?
+                  AND status = 'THREADS_PUBLISHED'
+                  AND threads_post_id != ''
+                """,
+                (clean_job_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            conn.execute("DELETE FROM media_candidates WHERE job_id = ?", (clean_job_id,))
+            conn.execute("DELETE FROM logs WHERE job_id = ?", (clean_job_id,))
+            conn.execute("DELETE FROM jobs WHERE id = ?", (clean_job_id,))
+        return True
+
     def get_threads_profile(
         self,
         profile_key: str,

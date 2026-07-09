@@ -264,6 +264,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             raise HTTPException(status_code=404, detail="Threads publish record not found")
         return record
 
+    def delete_threads_record(job_id: str, store: WorkbenchStore) -> dict[str, Any]:
+        if not store.delete_threads_publish_record(job_id):
+            raise HTTPException(status_code=404, detail="Threads publish record not found")
+        return {"deleted": True, "job_id": job_id}
+
     def require_threads_bridge_access(settings: dict[str, str], request: Request) -> None:
         expected_api_key = os.environ.get(THREADS_BRIDGE_API_KEY_ENV, "").strip()
         if not expected_api_key:
@@ -570,6 +575,21 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 raise HTTPException(status_code=502, detail=str(exc)) from None
         require_threads_bridge_access(settings, request)
         return refresh_threads_record_insights(job_id, settings, store)
+
+    @app.delete("/api/threads/publish-records/{job_id}")
+    def delete_threads_publish_record(
+        job_id: str,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        settings = store.get_settings()
+        if uses_remote_threads_service(settings):
+            try:
+                return get_threads_bridge_client(settings).delete_publish_record(job_id)
+            except ThreadsBridgeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from None
+        require_threads_bridge_access(settings, request)
+        return delete_threads_record(job_id, store)
 
     @app.post("/api/threads/media")
     def upload_threads_media(

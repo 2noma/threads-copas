@@ -660,6 +660,29 @@ async function refreshRecordInsights(jobId) {
   }
 }
 
+async function deletePublishRecord(jobId, productName) {
+  const message = $("#threads-publish-message");
+  if (!jobId) return;
+  const label = productName || "이 발행 기록";
+  if (!window.confirm(`${label} 기록을 DB에서 삭제할까요?`)) return;
+  setBusy(true);
+  try {
+    message.textContent = "발행 기록 삭제 중...";
+    await api(`/api/threads/publish-records/${encodeURIComponent(jobId)}`, {
+      method: "DELETE",
+    });
+    state.records = state.records.filter((record) => record.job_id !== jobId);
+    renderRecords();
+    message.textContent = "발행 기록을 삭제했습니다.";
+    clearMessage(message);
+  } catch (error) {
+    console.error(error);
+    message.textContent = error.message || "발행 기록을 삭제하지 못했습니다.";
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function refreshAll() {
   await Promise.all([refreshProfiles(), refreshRecords()]);
 }
@@ -828,6 +851,7 @@ function renderRecords() {
           <td>${formatMetric(record.threads_shares)}</td>
           <td>
             <button class="small-button" type="button" data-action="refresh-insights" data-job-id="${escapeAttribute(record.job_id || "")}">지표 새로고침</button>
+            <button class="small-button danger-button" type="button" data-action="delete-record" data-job-id="${escapeAttribute(record.job_id || "")}" data-product-name="${escapeAttribute(record.product_name || "")}">삭제</button>
             <span class="link-text">${escapeHtml(insightsAt)}</span>
             ${insightsError ? `<span class="link-text">${escapeHtml(insightsError)}</span>` : ""}
           </td>
@@ -937,9 +961,14 @@ function bindEvents() {
   $("#threads-publish-button").addEventListener("click", publishDraft);
   $("#refresh-button").addEventListener("click", refreshAll);
   $("#records-body").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='refresh-insights']");
+    const button = event.target.closest("button[data-action]");
     if (!button) return;
-    await refreshRecordInsights(button.dataset.jobId || "");
+    if (button.dataset.action === "refresh-insights") {
+      await refreshRecordInsights(button.dataset.jobId || "");
+    }
+    if (button.dataset.action === "delete-record") {
+      await deletePublishRecord(button.dataset.jobId || "", button.dataset.productName || "");
+    }
   });
   $("#threads-profiles-list").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");

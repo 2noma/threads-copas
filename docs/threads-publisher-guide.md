@@ -228,6 +228,7 @@ Threads 게시 이미지는 기본적으로 사용하지 않습니다.
 ```text
 GET /api/threads/publish-records
 POST /api/threads/publish-records/{job_id}/insights
+DELETE /api/threads/publish-records/{job_id}
 ```
 
 ## 토큰 갱신
