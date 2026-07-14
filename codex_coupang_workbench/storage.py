@@ -12,6 +12,7 @@ from typing import Any
 
 _REDNOTE_NOTE_ID_PATTERN = re.compile(r"^[0-9a-f]{24}$")
 _CHINESE_QUERY_PATTERN = re.compile(r"^[\u3400-\u9fff]{2,24}$")
+_ENGLISH_QUERY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .&'_-]{1,49}$")
 _OPAQUE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _REDNOTE_ASSET_TYPES = frozenset({"video", "frame"})
 _REDNOTE_ASSET_METRICS = ("width", "height", "duration_ms", "timestamp_ms")
@@ -770,8 +771,11 @@ class WorkbenchStore:
 
     def save_rednote_query(self, job_id: str, query: str) -> dict[str, Any]:
         clean_query = query.strip()
-        if not _CHINESE_QUERY_PATTERN.fullmatch(clean_query):
-            raise ValueError("RedNote query must contain 2 to 24 Chinese characters")
+        if not (
+            _CHINESE_QUERY_PATTERN.fullmatch(clean_query)
+            or _ENGLISH_QUERY_PATTERN.fullmatch(clean_query)
+        ):
+            raise ValueError("RedNote query must be Chinese or a plain English keyword")
         now = utc_now()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")

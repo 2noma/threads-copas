@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 _CHINESE_QUERY_PATTERN = re.compile(r"^[\u3400-\u9fff]{2,24}$")
+_PLAIN_ENGLISH_QUERY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .&'_-]{1,49}$")
+_HANGUL_PATTERN = re.compile(r"[\uac00-\ud7a3]")
 _KOREAN_PRODUCT_TERMS = (
     ("보조배터리", "充电宝"),
     ("레이저 가위", "激光剪刀"),
@@ -39,6 +41,9 @@ def generate_rednote_query(
     timeout: float = 60.0,
 ) -> str:
     """Return one Chinese RedNote shopping query without URL or punctuation."""
+    clean_name = product_name.strip()
+    if _is_plain_english_keyword(clean_name):
+        return clean_name
     fallback = _fallback_rednote_query(product_name)
     if shutil.which("codex") is None:
         return fallback
@@ -109,6 +114,14 @@ def _validated_rednote_query(raw_query: str) -> str:
     if not _CHINESE_QUERY_PATTERN.fullmatch(candidate):
         return ""
     return candidate
+
+
+def _is_plain_english_keyword(value: str) -> bool:
+    return bool(
+        value
+        and not _HANGUL_PATTERN.search(value)
+        and _PLAIN_ENGLISH_QUERY_PATTERN.fullmatch(value)
+    )
 
 
 def _fallback_rednote_query(product_name: str) -> str:

@@ -181,6 +181,11 @@
               <button class="button button-primary" id="generate-copy-button" type="button">문구 생성</button>
             </div>
           </div>
+          <div class="custom-persona-box">
+            <label for="product-facts-input">문구용 상품 정보 <span>자동 분석 후 수정 가능</span></label>
+            <textarea id="product-facts-input" rows="5" maxlength="2000" placeholder="상품 선택 후 Chrome에서 확인한 상세 정보가 여기에 표시됩니다. 한 줄에 하나씩 수정하세요."></textarea>
+            <p class="field-help">자동 분석한 사실만 문구에 사용합니다. 내용이 부정확하면 지우거나 직접 고치세요.</p>
+          </div>
           <div id="threads-variant-selector">
             <div id="persona-grid" class="persona-grid" aria-live="polite">
               <div class="empty-state"><strong>상품을 선택하면 6가지 문구를 만듭니다.</strong><span>짧고 직접적인 호기심 중심 문구로 구성됩니다.</span></div>
@@ -200,16 +205,16 @@
 
         <section class="step-panel" id="panel-rednote" role="tabpanel" aria-labelledby="step-rednote" data-studio-panel="rednote" hidden>
           <div class="panel-heading">
-            <div><span class="eyebrow">RedNote 검색</span><h3>중국어 검색어로 영상 게시물을 찾습니다</h3></div>
+            <div><span class="eyebrow">RedNote 검색</span><h3>한글은 중국어 직역, 영어는 원문으로 영상 게시물을 찾습니다</h3></div>
             <span class="panel-hint">로그인된 Chrome 사용</span>
           </div>
           <label for="rednote-query">RedNote 검색어</label>
           <div class="input-with-action query-actions">
             <input id="rednote-query" maxlength="50" placeholder="쿠팡 검색어를 입력하세요" autocomplete="off" />
             <button class="button button-secondary" id="regenerate-query-button" type="button">쿠팡 검색어로 되돌리기</button>
-            <button class="button button-primary" id="rednote-search-button" type="button">중국어로 영상 검색</button>
+            <button class="button button-primary" id="rednote-search-button" type="button">영상 검색</button>
           </div>
-          <p class="field-help">쿠팡 검색어가 자동으로 입력됩니다. 필요하면 수정하세요. 영상 검색을 누르면 입력한 내용을 중국어로 번역해 새 Chrome 탭에서 검색합니다.</p>
+          <p class="field-help">쿠팡 검색어가 자동으로 입력됩니다. 필요하면 수정하세요. 한글 검색어는 중국어로 직역하고, 영어 검색어는 그대로 새 Chrome 탭에서 검색합니다.</p>
           <div id="rednote-results" class="rednote-grid" aria-live="polite">
             <div class="empty-state"><strong>Chrome에서 찾은 영상만 여기에 표시됩니다.</strong><span>로그인이 풀렸다면 Chrome에서 RedNote에 먼저 로그인해주세요.</span></div>
           </div>

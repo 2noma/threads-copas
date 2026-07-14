@@ -276,6 +276,40 @@ class ThreadsApiClient:
         )
         return str(response.get("permalink") or "").strip()
 
+    def find_owned_reply_id(
+        self,
+        media_id: str,
+        access_token: str,
+        text: str,
+    ) -> str:
+        clean_media_id = media_id.strip()
+        clean_text = text.strip()
+        if not clean_media_id or not clean_text:
+            return ""
+        response = self._transport(
+            "GET",
+            f"{self.api_base_url}/{clean_media_id}/replies",
+            params={
+                "fields": "id,text,is_reply_owned_by_me",
+                "limit": "100",
+                "access_token": access_token,
+            },
+        )
+        replies = response.get("data")
+        if not isinstance(replies, list):
+            return ""
+        for reply in replies:
+            if not isinstance(reply, dict):
+                continue
+            if not reply.get("is_reply_owned_by_me"):
+                continue
+            if str(reply.get("text") or "").strip() != clean_text:
+                continue
+            reply_id = str(reply.get("id") or "").strip()
+            if reply_id:
+                return reply_id
+        return ""
+
     def _publish_text_container(
         self,
         threads_user_id: str,

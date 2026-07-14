@@ -522,7 +522,57 @@ function selectWorkflowProduct(product) {
     selectedAssetIds: [],
     preview: null,
   });
-  showMessage('#product-message', `"${product.product_name}"을 선택했습니다.`);
+  showMessage('#product-message', `"${product.product_name}"을 선택했습니다. Chrome에서 상세 정보를 분석하고 있습니다.`);
+  void enrichSelectedProductWithChromeContext(product);
+}
+
+function normalizedProductFacts(value) {
+  return [...new Set(String(value || '')
+    .split(/\r?\n/u)
+    .map((fact) => fact.trim().slice(0, 200))
+    .filter(Boolean))]
+    .slice(0, 20);
+}
+
+function productFactsForCopy(product) {
+  const input = $('#product-facts-input');
+  return normalizedProductFacts(input.value);
+}
+
+async function enrichSelectedProductWithChromeContext(product) {
+  const productUrl = String(product.product_url || '').trim();
+  if (!productUrl) return;
+  try {
+    const context = await runWorkflowRequest('product-context', (request) => (
+      api('/api/coupang/chrome-product-context', {
+        method: 'POST',
+        signal: request.signal,
+        body: JSON.stringify({ product_url: productUrl }),
+      })
+    ));
+    if (context === STALE_WORKFLOW_RESPONSE) return;
+    const current = store.getState().selectedProduct;
+    if (!current || current.product_url !== productUrl) return;
+    const facts = normalizedProductFacts([
+      ...(context.facts || []),
+      ...(current.facts || []),
+    ].join('\n'));
+    store.patch({
+      selectedProduct: {
+        ...current,
+        product_name: context.product_name || current.product_name,
+        product_url: context.product_url || current.product_url,
+        image_url: context.image_url || current.image_url,
+        facts,
+      },
+    });
+    showMessage('#product-message', '자동 분석한 상품 정보를 문구 생성에 반영했습니다.');
+  } catch (error) {
+    const current = store.getState().selectedProduct;
+    if (current?.product_url === productUrl) {
+      showMessage('#product-message', `상품 상세 자동 분석에 실패했습니다. 상품명과 확인 가능한 정보로 문구를 만들 수 있습니다. (${error.message})`);
+    }
+  }
 }
 
 async function useManualProduct(button) {
@@ -588,10 +638,10 @@ async function useChromeProductContext(button) {
   });
 }
 
-function createCodexThreadsPrompt(product = store.getState().selectedProduct) {
+function createCodexThreadsPrompt(product = store.getState().selectedProduct, productFacts = product?.facts || []) {
   if (!product) return '';
-  const facts = Array.isArray(product.facts) && product.facts.length
-    ? product.facts.slice(0, 6).map((fact) => `- ${fact}`).join('\n')
+  const facts = Array.isArray(productFacts) && productFacts.length
+    ? productFacts.slice(0, 6).map((fact) => `- ${fact}`).join('\n')
     : '- 자동 수집된 상세 정보 없음';
   return [
     '실제 사용 맥락이 자연스럽게 이어지는 Threads 본문을 작성해줘.',
@@ -626,6 +676,9 @@ async function generateCopy({ regenerate = false } = {}) {
     return;
   }
   invalidateWorkflowRequests();
+  const facts = productFactsForCopy(product);
+  const productWithFacts = { ...product, facts };
+  store.patch({ selectedProduct: productWithFacts });
   const button = regenerate ? $('#regenerate-copy-button') : $('#generate-copy-button');
   await withBusy(button, '문구 만드는 중', async () => {
     showMessage('#copy-message', 'Codex가 페르소나별 문구를 만들고 있습니다.');
@@ -635,13 +688,13 @@ async function generateCopy({ regenerate = false } = {}) {
       const payload = {
         job_id: regenerate ? state.jobId : '',
         profile_key: state.selectedProfileKey,
-        product_url: product.product_url,
-        partner_url: product.partner_url || '',
-        product_name: product.product_name,
+        product_url: productWithFacts.product_url,
+        partner_url: productWithFacts.partner_url || '',
+        product_name: productWithFacts.product_name,
         coupang_channel_id: $('#coupang-channel-select').value,
-        facts: product.facts || [],
+        facts,
         custom_persona: $('#custom-persona-input').value.trim(),
-        codex_threads_prompt: configuredPrompt || createCodexThreadsPrompt(product),
+        codex_threads_prompt: configuredPrompt || createCodexThreadsPrompt(productWithFacts, facts),
         regenerate_persona_keys: regenerate && currentVariant ? [currentVariant.persona_key] : [],
       };
       const response = await runWorkflowRequest('draft', (request) => (
@@ -654,7 +707,7 @@ async function generateCopy({ regenerate = false } = {}) {
       if (response === STALE_WORKFLOW_RESPONSE) return;
       store.patch({
         jobId: response.job.id,
-        selectedProduct: { ...product, product_name: response.job.product_name, product_url: response.job.product_url },
+        selectedProduct: { ...productWithFacts, product_name: response.job.product_name, product_url: response.job.product_url },
         variants: response.variants,
         selectedVariantId: response.selected_variant_id,
         commentText: response.comment_text,
@@ -685,6 +738,10 @@ function renderVariants(state) {
   const variant = selectedVariant();
   $('#selected-copy-editor').hidden = !variant;
   $('#selected-copy-text').value = variant?.text || variant?.body || '';
+  const factsInput = $('#product-facts-input');
+  const factsText = (state.selectedProduct?.facts || []).join('\n');
+  if (factsInput.value !== factsText) factsInput.value = factsText;
+  factsInput.disabled = isPublishPayloadLocked(state.preview) || !state.selectedProduct;
 }
 
 async function selectThreadVariant(variantId) {
@@ -804,8 +861,8 @@ async function searchRedNote(button) {
     return;
   }
   invalidateWorkflowRequests();
-  await withBusy(button, '중국어 번역·검색 중', async () => {
-    showMessage('#rednote-message', '입력한 검색어를 중국어로 번역한 뒤 새 Chrome 탭에서 영상을 찾고 있습니다.');
+  await withBusy(button, '검색·열기 중', async () => {
+    showMessage('#rednote-message', '한글은 중국어로 직역하고 영어는 그대로 새 Chrome 탭에서 영상을 찾고 있습니다.');
     try {
       const response = await runWorkflowRequest('rednote-search', async (request) => {
         const query = await api(`/api/jobs/${encodeURIComponent(state.jobId)}/rednote-query`, {

@@ -631,6 +631,26 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     )
                 except ThreadsApiError as exc:
                     if exc.outcome_unknown:
+                        try:
+                            recovered_reply_id = client.find_owned_reply_id(
+                                str(job["threads_post_id"]),
+                                profile["access_token"],
+                                str(job["publish_locked_comment"]),
+                            )
+                        except ThreadsApiError:
+                            recovered_reply_id = ""
+                        if recovered_reply_id:
+                            checkpoint_remote_publish(
+                                job_id,
+                                "publishing_reply_inflight",
+                                "published",
+                                store,
+                                lease_owner,
+                                lease_fence,
+                                threads_reply_id=recovered_reply_id,
+                                status="THREADS_PUBLISHED",
+                            )
+                            continue
                         seal_remote_publish_outcome(
                             job_id,
                             "publishing_reply_inflight",
