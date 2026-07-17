@@ -27,16 +27,20 @@ from .coupang_partners import (
 from .codex_threads import (
     PERSONAS,
     CodexThreadsError,
+    edit_codex_threads_posts,
     generate_codex_threads_post,
 )
 from .codex_rednote import generate_rednote_query
-from .local_chrome import LocalChromeError, fetch_chrome_product_context
+from .codex_product_images import CodexProductImageError, analyze_detail_images
+from .codex_media_analysis import CodexMediaAnalysisError, analyze_selected_frames
+from .local_chrome import LocalChromeError, fetch_chrome_product_context, search_chrome_products
 from .naver import publish_handoff_message
 from .product_research import fetch_best_product_context
 from .rednote_sidecar import RedNoteSidecarClient, RedNoteSidecarError
 from .schemas import (
     CoupangDeeplinkPayload,
     CoupangProductPreviewPayload,
+    CoupangProductSearchMorePayload,
     CoupangProductSearchPayload,
     CopyVariantEditPayload,
     CopySelectionPayload,
@@ -48,6 +52,7 @@ from .schemas import (
     RedNoteDownloadPayload,
     RedNoteQueryPayload,
     RedNoteSearchPayload,
+    RedNoteUrlPayload,
     SettingsPayload,
     ThreadsDraftPayload,
     ThreadsMediaPublishActionPayload,
@@ -115,6 +120,8 @@ _PRIVATE_PUBLISH_JOB_FIELDS = frozenset(
         "publish_child_container_ids",
         "publish_container_id",
         "publish_resume_stage",
+        "thread_hook_candidates_json",
+        "thread_hook_candidates",
     }
 )
 
@@ -124,16 +131,16 @@ def fallback_style_for_persona(persona_key: str, custom_instruction: str = "") -
         return persona_key
     instruction = custom_instruction.lower()
     if any(term in instruction for term in ("스토리", "대화", "사연")):
-        return "story"
+        return "conversation"
     if any(term in instruction for term in ("문제", "해결", "충격")):
-        return "problem_solution"
+        return "result_proof"
     if any(term in instruction for term in ("솔직", "발견", "후기")):
-        return "honest_discovery"
+        return "visual_desire"
     if any(term in instruction for term in ("구매", "전환", "확인")):
-        return "conversion"
+        return "clever_use"
     if any(term in instruction for term in ("공감", "현실", "친근")):
-        return "relatable"
-    return "curiosity"
+        return "relatable_problem"
+    return "emotional_reaction"
 
 
 def public_settings(settings: dict[str, str]) -> dict[str, str]:
@@ -277,6 +284,35 @@ def merge_product_facts(*fact_groups: list[str] | tuple[str, ...] | None) -> lis
             if clean_fact and clean_fact not in merged:
                 merged.append(clean_fact)
     return merged
+
+
+def selected_media_scene_facts(job_id: str, store: WorkbenchStore) -> list[str]:
+    selected_frames = [
+        asset
+        for asset in store.list_rednote_assets(job_id)
+        if asset.get("selected") and asset.get("asset_type") == "frame"
+    ][:3]
+    if not selected_frames:
+        return []
+    output_root = os.environ.get(
+        REDNOTE_OUTPUT_ROOT_ENV,
+        str(Path.home() / "Downloads" / "rednote"),
+    )
+    root = _strict_directory(output_root, "RedNote output root")
+    paths: list[Path] = []
+    for asset in selected_frames:
+        local_path = Path(str(asset.get("local_path") or ""))
+        try:
+            local_path.relative_to(root)
+        except ValueError as exc:
+            raise CodexMediaAnalysisError(
+                "선택한 대표 장면 경로가 올바르지 않습니다."
+            ) from exc
+        media_file = _strict_regular_file(local_path.parent, local_path.name)
+        if not _looks_like_jpeg(media_file):
+            raise CodexMediaAnalysisError("선택한 대표 장면이 올바른 JPG가 아닙니다.")
+        paths.append(media_file)
+    return analyze_selected_frames(paths)
 
 
 def normalize_rednote_search_response(response: Any) -> tuple[str, list[dict[str, Any]]]:
@@ -698,6 +734,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         )
         return {
             "job": public_publish_job(job),
+            "hook_candidates": [],
             "copy_variants": variants,
             "selected_copy_variant": public_selected_variant,
             "selected_variant_id": str(
@@ -1350,6 +1387,20 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 break
         return {"keyword": keyword, "products": products}
 
+    @app.post("/api/coupang/products/search/more")
+    def search_more_coupang_products(payload: CoupangProductSearchMorePayload) -> dict[str, Any]:
+        try:
+            products = search_chrome_products(payload.keyword, limit=payload.limit)
+        except LocalChromeError as exc:
+            detail = "Chrome에서 쿠팡 검색 결과를 가져오지 못했습니다."
+            if "AppleScript를 통한 자바스크립트 실행 기능이 꺼져" in str(exc):
+                detail = "Chrome 메뉴의 보기 → 개발자 → Apple Events의 자바스크립트 허용을 켜 주세요."
+            raise HTTPException(
+                status_code=400,
+                detail=detail,
+            ) from None
+        return {"keyword": payload.keyword, "products": products[: payload.limit]}
+
     @app.post("/api/coupang/chrome-product-context")
     def chrome_coupang_product_context(payload: CoupangProductPreviewPayload) -> dict[str, Any]:
         product_url = payload.product_url.strip()
@@ -1363,11 +1414,22 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             image_url=context.image_url,
             facts=tuple(context.facts or ()),
         )
-        return product_preview_response(
+        response = product_preview_response(
             product,
             original_url=product_url,
             resolved_url=context.resolved_url or product_url,
         )
+        response["detail_images"] = list(context.detail_images or [])
+        return response
+
+    @app.post("/api/coupang/detail-image-analysis")
+    def analyze_coupang_detail_images(payload: CoupangProductPreviewPayload) -> dict[str, Any]:
+        try:
+            context = fetch_chrome_product_context(payload.product_url.strip())
+            facts = analyze_detail_images(context.page_title, list(context.detail_images or []))
+        except (LocalChromeError, CodexProductImageError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        return {"product_name": context.page_title, "facts": facts, "detail_image_count": len(context.detail_images or [])}
 
     @app.post("/api/coupang/deeplink")
     def create_coupang_deeplink_endpoint(
@@ -1384,22 +1446,38 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         payload: JobCreatePayload,
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, Any]:
+        product_url = payload.product_url.strip()
+        parsed_product_url = urlparse(product_url)
+        if (
+            parsed_product_url.netloc.lower() == "link.coupang.com"
+            and parsed_product_url.path.startswith("/re/")
+        ):
+            settings = store.get_settings()
+            try:
+                deeplink = create_coupang_deeplink(
+                    product_url,
+                    settings,
+                    sub_id=settings.get("coupang_sub_id", ""),
+                )
+            except CoupangPartnersError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            product_url = deeplink["partner_url"]
         product_name = payload.product_name.strip()
         image_url = payload.image_url.strip()
         if not product_name or not image_url:
-            known_context = store.get_known_product_context(payload.product_url)
+            known_context = store.get_known_product_context(product_url)
             product_name = product_name or known_context.get("product_name", "")
             image_url = image_url or known_context.get("image_url", "")
         if not product_name or not image_url:
             product_context = fetch_best_product_context(
-                payload.product_url,
+                product_url,
                 product_name,
             )
             product_name = product_name or product_context.page_title
             image_url = image_url or product_context.image_url
         return public_publish_job(
             store.add_job(
-                product_url=payload.product_url,
+                product_url=product_url,
                 product_name=product_name or "상품명 자동 확인 필요",
                 image_url=image_url,
                 memo=payload.memo,
@@ -1535,6 +1613,61 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             "job_id": job_id,
             "note_id": payload.note_id,
             "canonical_url": selected["canonical_url"],
+            "sidecar_job_id": sidecar_job_id,
+            "media_url": f"/api/jobs/{job_id}/rednote-video",
+            "note": {
+                "title": _safe_public_text(resolved_note.get("title"), 160),
+                "duration_ms": max(0, int(resolved_note.get("durationMs") or 0)),
+                "width": max(0, int(resolved_note.get("width") or 0)),
+                "height": max(0, int(resolved_note.get("height") or 0)),
+            },
+        }
+
+    @app.post("/api/jobs/{job_id}/rednote-url")
+    def download_rednote_url_for_job(
+        job_id: str,
+        payload: RedNoteUrlPayload,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        job = store.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        reject_locked_publish_mutation(job)
+        try:
+            sidecar = get_rednote_sidecar_client()
+            resolved = sidecar.resolve(payload.url)
+            session_id = str(resolved.get("sessionId") or "").strip()
+            resolved_note = resolved.get("note")
+            note_id = str((resolved_note or {}).get("noteId") or "").strip()
+            if (
+                not _REDNOTE_OPAQUE_ID.fullmatch(session_id)
+                or not _REDNOTE_NOTE_ID.fullmatch(note_id)
+                or not isinstance(resolved_note, dict)
+            ):
+                raise ValueError("invalid resolve response")
+            created = sidecar.create_job(session_id)
+            sidecar_job_id = str(created.get("jobId") or "").strip()
+            if not _REDNOTE_OPAQUE_ID.fullmatch(sidecar_job_id):
+                raise ValueError("invalid download response")
+        except RedNoteSidecarError as exc:
+            raise_rednote_sidecar_http_error(exc)
+        except ValueError:
+            raise HTTPException(
+                status_code=502,
+                detail="RedNote URL 다운로드 응답 형식이 올바르지 않습니다.",
+            ) from None
+
+        canonical_url = f"https://www.rednote.com/explore/{note_id}"
+        store.update_studio_job(
+            job_id,
+            rednote_note_id=note_id,
+            rednote_canonical_url=canonical_url,
+            rednote_sidecar_job_id=sidecar_job_id,
+        )
+        return {
+            "job_id": job_id,
+            "note_id": note_id,
+            "canonical_url": canonical_url,
             "sidecar_job_id": sidecar_job_id,
             "media_url": f"/api/jobs/{job_id}/rednote-video",
             "note": {
@@ -2143,6 +2276,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         store: WorkbenchStore = Depends(get_store),
     ) -> dict[str, Any]:
         settings = store.get_settings()
+        media_copy_error = ""
         if not payload.job_id.strip():
             initial_persona_keys = {key for key, _label in THREAD_DRAFT_VARIANTS}
             if payload.custom_persona:
@@ -2243,6 +2377,18 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 memo=payload.memo,
             )
 
+        if existing_job is not None:
+            try:
+                product_facts = merge_product_facts(
+                    product_facts,
+                    selected_media_scene_facts(job["id"], store),
+                )
+            except (CodexMediaAnalysisError, OSError, ValueError) as exc:
+                media_copy_error = (
+                    "선택 미디어 장면을 읽지 못해 상품 정보만으로 문구를 만들었습니다. "
+                    f"({exc})"
+                )
+
         existing_variants = store.list_copy_variants(job["id"])
         existing_by_key = {
             variant["persona_key"]: variant for variant in existing_variants
@@ -2276,6 +2422,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             job = store.update_studio_job(
                 job["id"], selected_profile_key=payload.profile_key.strip()
             )
+        hook_candidates_error = ""
         if existing_job is not None and payload.regenerate_persona_keys:
             target_specs = [specs_by_key[key] for key in payload.regenerate_persona_keys]
         else:
@@ -2304,13 +2451,20 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             "persona": settings.get("writer_persona", ""),
             "prompt": payload.codex_threads_prompt,
         }
+
+        def generate_persona(spec: dict[str, str]) -> str:
+            return generate_codex_threads_post(
+                **codex_kwargs,
+                style=spec["persona_key"],
+                custom_instruction=spec["custom_instruction"],
+            ).strip()
+
+        generated_drafts: dict[str, str] = {}
         with ThreadPoolExecutor(max_workers=min(4, len(target_specs))) as executor:
             pending = {
                 executor.submit(
-                    generate_codex_threads_post,
-                    **codex_kwargs,
-                    style=spec["persona_key"],
-                    custom_instruction=spec["custom_instruction"],
+                    generate_persona,
+                    spec,
                 ): spec["persona_key"]
                 for spec in target_specs
             }
@@ -2319,9 +2473,25 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 try:
                     generated = future.result().strip()
                     if generated:
-                        variant_texts[persona_key] = generated
+                        generated_drafts[persona_key] = generated
                 except CodexThreadsError:
                     continue
+
+        if generated_drafts:
+            try:
+                edited_drafts = edit_codex_threads_posts(
+                    model=THREADS_COPY_CODEX_MODEL,
+                    drafts=generated_drafts,
+                    product_name=job["product_name"],
+                    product_facts=product_facts,
+                    memo=payload.memo or job.get("memo", ""),
+                )
+                for persona_key, edited in edited_drafts.items():
+                    clean_edited = edited.strip()
+                    if clean_edited:
+                        variant_texts[persona_key] = clean_edited
+            except CodexThreadsError:
+                pass
 
         variants_to_store = [
             {
@@ -2346,7 +2516,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             selected_variant = next(
                 variant
                 for variant in stored_variants
-                if variant["persona_key"] == "curiosity"
+                if variant["persona_key"] == PERSONAS[0][0]
             )
             selected_variant = store.select_copy_variant(
                 job["id"], selected_variant["id"]
@@ -2374,6 +2544,9 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         ]
         return {
             "job": public_publish_job(preview["job"]),
+            "hook_candidates": [],
+            "hook_candidates_error": hook_candidates_error,
+            "media_copy_error": media_copy_error,
             "text": threads_text,
             "variants": variants,
             "selected_variant_id": selected_variant["id"],
@@ -2480,11 +2653,13 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     if post_id:
                         reply_id = str(exc.detail.get("threads_reply_id") or "").strip()
                         permalink = str(exc.detail.get("threads_permalink") or "").strip()
-                        updated_job = store.mark_threads_published(
+                        error = str(exc.detail.get("error") or exc)
+                        updated_job = store.mark_threads_reply_failed(
                             job_id=payload.job_id,
                             profile_key=payload.profile_key,
                             threads_post_id=post_id,
-                            threads_reply_id=reply_id,
+                            comment_text=payload.comment_text,
+                            error=error,
                             threads_permalink=permalink,
                             published_text=(
                                 f"본문:\n{payload.text.strip()}\n\n댓글:\n{payload.comment_text.strip()}"
@@ -2505,6 +2680,29 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             ).strip()
             if not post_id:
                 raise HTTPException(status_code=502, detail="Threads service did not return a post id")
+            if payload.comment_text.strip() and not reply_id:
+                updated_job = store.mark_threads_reply_failed(
+                    job_id=payload.job_id,
+                    profile_key=payload.profile_key,
+                    threads_post_id=post_id,
+                    comment_text=payload.comment_text,
+                    error="Threads service did not return a reply id",
+                    threads_permalink=permalink,
+                    published_text=(
+                        f"본문:\n{payload.text.strip()}\n\n댓글:\n{payload.comment_text.strip()}"
+                    ),
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "Threads post was published, but reply publishing failed",
+                        "threads_post_id": post_id,
+                        "threads_reply_id": "",
+                        "threads_permalink": permalink,
+                        "error": "Threads service did not return a reply id",
+                        "job": public_publish_job(updated_job),
+                    },
+                )
             updated_job = store.mark_threads_published(
                 job_id=payload.job_id,
                 profile_key=payload.profile_key,
@@ -2533,6 +2731,57 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             comment_text=payload.comment_text,
             store=store,
         )
+
+    @app.post("/api/jobs/{job_id}/threads-reply-retry")
+    def retry_threads_reply(
+        job_id: str,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, Any]:
+        job = store.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        post_id = str(job.get("threads_post_id") or "").strip()
+        reply_id = str(job.get("threads_reply_id") or "").strip()
+        comment_text = str(job.get("publish_locked_comment") or "").strip()
+        profile_key = str(
+            job.get("publish_locked_profile_key")
+            or job.get("threads_profile_key")
+            or ""
+        ).strip()
+        if reply_id:
+            return media_publish_result(job)
+        if (
+            str(job.get("publish_resume_stage") or "") != "publishing_reply"
+            or not post_id
+            or not comment_text
+            or not profile_key
+        ):
+            raise HTTPException(status_code=409, detail="댓글 재시도 정보가 없습니다.")
+        settings = store.get_settings()
+        if not uses_remote_threads_service(settings):
+            raise HTTPException(status_code=409, detail="원격 Threads 서비스가 필요합니다.")
+        try:
+            remote = get_threads_bridge_client(settings).retry_reply(
+                profile_key=profile_key,
+                threads_post_id=post_id,
+                comment_text=comment_text,
+            )
+        except ThreadsBridgeError as exc:
+            store.mark_threads_reply_failed(
+                job_id,
+                profile_key=profile_key,
+                threads_post_id=post_id,
+                comment_text=comment_text,
+                error=str(exc),
+                threads_permalink=str(job.get("threads_permalink") or ""),
+                published_text=str(job.get("sns_final") or ""),
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from None
+        remote_reply_id = str(remote.get("threads_reply_id") or "").strip()
+        if not remote_reply_id:
+            raise HTTPException(status_code=502, detail="Threads service did not return a reply id")
+        updated_job = store.mark_threads_reply_published(job_id, remote_reply_id)
+        return media_publish_result(updated_job)
 
     @app.post("/api/threads/remote-publish")
     def publish_remote_threads_post(

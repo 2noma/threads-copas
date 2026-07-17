@@ -17,6 +17,7 @@ class ProductContext:
     description: str = ""
     image_url: str = ""
     facts: list[str] | None = None
+    detail_images: list[str] | None = None
 
 
 class _ProductMetaParser(HTMLParser):

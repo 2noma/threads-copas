@@ -73,13 +73,19 @@ _PUBLISH_CHECKPOINT_ALIASES = {
     "container_id": "publish_container_id",
 }
 _COPY_VARIANT_ORDER = {
-    "curiosity": 0,
-    "relatable": 1,
-    "problem_solution": 2,
-    "honest_discovery": 3,
-    "story": 4,
-    "conversion": 5,
+    "result_proof": 0,
+    "clever_use": 1,
+    "visual_desire": 2,
+    "emotional_reaction": 3,
+    "relatable_problem": 4,
+    "conversation": 5,
     "custom": 6,
+    "curiosity": 10,
+    "relatable": 11,
+    "problem_solution": 12,
+    "honest_discovery": 13,
+    "story": 14,
+    "conversion": 15,
 }
 THREADS_OAUTH_STATE_TTL_SECONDS = 600
 REMOTE_PUBLISH_LEASE_TTL_SECONDS = 300
@@ -142,6 +148,7 @@ class WorkbenchStore:
                     sns_final TEXT NOT NULL DEFAULT '',
                     generated_image_url TEXT NOT NULL DEFAULT '',
                     tags TEXT NOT NULL DEFAULT '[]',
+                    thread_hook_candidates_json TEXT NOT NULL DEFAULT '[]',
                     publish_url TEXT NOT NULL DEFAULT '',
                     error_message TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
@@ -263,6 +270,7 @@ class WorkbenchStore:
             self._ensure_column(conn, "jobs", "threads_insights_error", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "selected_profile_key", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "selected_copy_variant_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "jobs", "thread_hook_candidates_json", "TEXT NOT NULL DEFAULT '[]'")
             self._ensure_column(conn, "jobs", "rednote_query", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "jobs", "rednote_query_generation", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "jobs", "rednote_note_id", "TEXT NOT NULL DEFAULT ''")
@@ -674,7 +682,10 @@ class WorkbenchStore:
         clean_ids = [asset_id.strip() for asset_id in asset_ids]
         if len(clean_ids) != len(set(clean_ids)):
             raise ValueError("duplicate RedNote asset ids are not allowed")
-        if mode == "video":
+        if mode == "":
+            if clean_ids:
+                raise ValueError("text-only mode does not accept RedNote assets")
+        elif mode == "video":
             if len(clean_ids) != 1:
                 raise ValueError("video mode requires exactly one video")
         elif mode == "images":
@@ -695,29 +706,32 @@ class WorkbenchStore:
             if job_row is None:
                 raise KeyError(job_id)
             _raise_if_publish_payload_locked(job_row)
-            placeholders = ",".join("?" for _ in clean_ids)
-            rows = conn.execute(
-                f"SELECT id, asset_type FROM rednote_assets WHERE job_id = ? AND id IN ({placeholders})",
-                (job_id, *clean_ids),
-            ).fetchall()
-            if len(rows) != len(clean_ids):
-                raise ValueError("All RedNote assets must belong to this job")
-            asset_types = {row["asset_type"] for row in rows}
-            if mode == "video" and asset_types != {"video"}:
-                raise ValueError("video mode accepts only one video asset")
-            if mode == "images" and asset_types != {"frame"}:
-                raise ValueError("images mode accepts only frame assets")
-            if mode == "mixed" and asset_types != {"video", "frame"}:
-                raise ValueError("mixed mode requires one video asset and one frame asset")
+            rows = []
+            if clean_ids:
+                placeholders = ",".join("?" for _ in clean_ids)
+                rows = conn.execute(
+                    f"SELECT id, asset_type FROM rednote_assets WHERE job_id = ? AND id IN ({placeholders})",
+                    (job_id, *clean_ids),
+                ).fetchall()
+                if len(rows) != len(clean_ids):
+                    raise ValueError("All RedNote assets must belong to this job")
+                asset_types = {row["asset_type"] for row in rows}
+                if mode == "video" and asset_types != {"video"}:
+                    raise ValueError("video mode accepts only one video asset")
+                if mode == "images" and asset_types != {"frame"}:
+                    raise ValueError("images mode accepts only frame assets")
+                if mode == "mixed" and asset_types != {"video", "frame"}:
+                    raise ValueError("mixed mode requires one video asset and one frame asset")
 
             conn.execute(
                 "UPDATE rednote_assets SET selected = 0, updated_at = ? WHERE job_id = ?",
                 (now, job_id),
             )
-            conn.execute(
-                f"UPDATE rednote_assets SET selected = 1, updated_at = ? WHERE job_id = ? AND id IN ({placeholders})",
-                (now, job_id, *clean_ids),
-            )
+            if clean_ids:
+                conn.execute(
+                    f"UPDATE rednote_assets SET selected = 1, updated_at = ? WHERE job_id = ? AND id IN ({placeholders})",
+                    (now, job_id, *clean_ids),
+                )
             conn.execute(
                 "UPDATE jobs SET media_mode = ?, updated_at = ? WHERE id = ?",
                 (mode, now, job_id),
@@ -767,6 +781,35 @@ class WorkbenchStore:
             self.add_log(job_id, "INFO", "Studio job updated")
         if row is None:
             raise KeyError(job_id)
+        return self._row_to_job(row)
+
+    def save_thread_hook_candidates(
+        self,
+        job_id: str,
+        candidates: list[str],
+    ) -> dict[str, Any]:
+        if not isinstance(candidates, list) or len(candidates) != 10:
+            raise ValueError("thread hook candidates must contain exactly 10 items")
+        normalized = [str(candidate).strip() for candidate in candidates]
+        if any(not candidate for candidate in normalized) or len(set(normalized)) != 10:
+            raise ValueError("thread hook candidates must be non-empty and unique")
+
+        now = utc_now()
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE jobs
+                SET thread_hook_candidates_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(normalized, ensure_ascii=False), now, job_id),
+            )
+            if result.rowcount == 0:
+                raise KeyError(job_id)
+            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        self.add_log(job_id, "INFO", "Threads hook candidates saved")
+        if row is None:
+            raise RuntimeError("Threads hook candidates could not be loaded")
         return self._row_to_job(row)
 
     def save_rednote_query(self, job_id: str, query: str) -> dict[str, Any]:
@@ -2136,6 +2179,99 @@ class WorkbenchStore:
             raise KeyError(job_id)
         return job
 
+    def mark_threads_reply_failed(
+        self,
+        job_id: str,
+        *,
+        profile_key: str,
+        threads_post_id: str,
+        comment_text: str,
+        error: str,
+        threads_permalink: str = "",
+        published_text: str = "",
+    ) -> dict[str, Any]:
+        clean_error = error.strip()[:1000]
+        if not clean_error:
+            raise ValueError("Threads reply failure error is required")
+        now = utc_now()
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'THREADS_PUBLISHED',
+                    threads_profile_key = ?,
+                    threads_post_id = ?,
+                    threads_reply_id = '',
+                    threads_permalink = ?,
+                    threads_published_at = CASE
+                        WHEN threads_published_at = '' THEN ? ELSE threads_published_at END,
+                    sns_final = CASE WHEN ? != '' THEN ? ELSE sns_final END,
+                    publish_locked_profile_key = ?,
+                    publish_locked_comment = ?,
+                    publish_stage = 'failed',
+                    publish_resume_stage = 'publishing_reply',
+                    publish_retry_count = publish_retry_count + 1,
+                    publish_last_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    profile_key.strip(),
+                    threads_post_id.strip(),
+                    threads_permalink.strip(),
+                    now,
+                    published_text.strip(),
+                    published_text.strip(),
+                    profile_key.strip(),
+                    comment_text.strip(),
+                    clean_error,
+                    now,
+                    job_id,
+                ),
+            )
+            if result.rowcount == 0:
+                raise KeyError(job_id)
+        self.add_log(job_id, "ERROR", clean_error)
+        job = self.get_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        return job
+
+    def mark_threads_reply_published(
+        self,
+        job_id: str,
+        threads_reply_id: str,
+    ) -> dict[str, Any]:
+        clean_reply_id = threads_reply_id.strip()
+        if not clean_reply_id:
+            raise ValueError("Threads reply id is required")
+        now = utc_now()
+        with self._connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE jobs
+                SET threads_reply_id = ?,
+                    publish_stage = 'published',
+                    publish_resume_stage = '',
+                    publish_last_error = '',
+                    updated_at = ?
+                WHERE id = ?
+                  AND threads_post_id != ''
+                  AND threads_reply_id = ''
+                  AND publish_resume_stage = 'publishing_reply'
+                """,
+                (clean_reply_id, now, job_id),
+            )
+            if result.rowcount == 0:
+                if conn.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone() is None:
+                    raise KeyError(job_id)
+                raise ValueError("Threads reply is not waiting for retry")
+        self.add_log(job_id, "INFO", "Threads reply published")
+        job = self.get_job(job_id)
+        if job is None:
+            raise KeyError(job_id)
+        return job
+
     def update_threads_permalink(self, job_id: str, permalink: str) -> dict[str, Any]:
         now = utc_now()
         with self._connect() as conn:
@@ -2240,6 +2376,19 @@ class WorkbenchStore:
             job["tags"] = json.loads(job.get("tags") or "[]")
         except json.JSONDecodeError:
             job["tags"] = []
+        try:
+            hook_candidates = json.loads(job.get("thread_hook_candidates_json") or "[]")
+        except json.JSONDecodeError:
+            hook_candidates = []
+        job["thread_hook_candidates"] = (
+            hook_candidates
+            if isinstance(hook_candidates, list)
+            and len(hook_candidates) == 10
+            and all(isinstance(candidate, str) for candidate in hook_candidates)
+            and all(candidate.strip() for candidate in hook_candidates)
+            and len(set(hook_candidates)) == 10
+            else []
+        )
         for field in _PUBLISH_JSON_FIELDS:
             try:
                 value = json.loads(job.get(field) or "[]")

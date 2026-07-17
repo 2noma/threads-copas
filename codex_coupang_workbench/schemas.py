@@ -143,6 +143,17 @@ class RedNoteDownloadPayload(BaseModel):
     note_id: str = Field(pattern=r"^[0-9a-f]{24}$")
 
 
+class RedNoteUrlPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def normalize_url(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
 class RedNoteCompletePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -150,8 +161,8 @@ class RedNoteCompletePayload(BaseModel):
 class MediaSelectionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    mode: Literal["video", "images", "mixed"]
-    asset_ids: list[str] = Field(min_length=1, max_length=5)
+    mode: Literal["", "video", "images", "mixed"] = ""
+    asset_ids: list[str] = Field(default_factory=list, max_length=5)
 
     @field_validator("asset_ids")
     @classmethod
@@ -209,6 +220,18 @@ class CoupangProductSearchPayload(BaseModel):
         return value
 
 
+class CoupangProductSearchMorePayload(BaseModel):
+    keyword: str = Field(min_length=1, max_length=50)
+    limit: int = Field(default=30, ge=1, le=30)
+
+    @field_validator("keyword", mode="before")
+    @classmethod
+    def normalize_keyword(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()[:50]
+        return value
+
+
 class ThreadsPublishPayload(BaseModel):
     profile_key: str = Field(min_length=1)
     job_id: str = Field(min_length=1)
@@ -222,6 +245,14 @@ class ThreadsRemotePublishPayload(BaseModel):
     product_name: str = Field(min_length=1)
     text: str = Field(min_length=1)
     comment_text: str = ""
+
+
+class ThreadsRemoteReplyPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_key: str = Field(min_length=1)
+    threads_post_id: str = Field(min_length=1)
+    comment_text: str = Field(min_length=1, max_length=500)
 
 
 class ThreadsRemoteMediaPublishPayload(BaseModel):

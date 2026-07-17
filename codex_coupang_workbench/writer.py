@@ -201,17 +201,60 @@ def generate_threads_post(
         facts.extend(_normalize_facts([memo]))
     public_facts = _public_content_facts(_dedupe(facts))
     relatable = _threads_curiosity_post(clean_name, public_facts)
-    if style in {"shock", "problem_solution"}:
-        return _threads_shock_post(relatable)
-    if style == "story":
-        return _threads_story_post(relatable)
-    if style in {"viral", "curiosity"}:
-        return _threads_viral_post(relatable)
-    if style == "honest_discovery":
-        return _threads_honest_discovery_post(relatable)
-    if style == "conversion":
-        return _threads_conversion_post(relatable)
-    return relatable
+    if style in {"shock", "problem_solution", "result_proof"}:
+        result = _threads_shock_post(relatable)
+    elif style in {"story", "conversation"}:
+        result = _threads_story_post(relatable)
+    elif style in {"viral", "curiosity", "clever_use"}:
+        result = _threads_viral_post(relatable)
+    elif style == "emotional_reaction":
+        result = _threads_emotional_reaction_post(relatable)
+    elif style in {"honest_discovery", "visual_desire"}:
+        result = _threads_honest_discovery_post(relatable)
+    elif style == "conversion":
+        result = _threads_conversion_post(relatable)
+    else:
+        result = relatable
+    return _fit_threads_fallback(result, style)
+
+
+def _fit_threads_fallback(text: str, style: str) -> str:
+    paragraphs = [
+        " ".join(part.split())
+        for part in text.split("\n\n")
+        if part.strip()
+    ][:5]
+    closings = {
+        "conversation": "비슷한 순간을 자주 겪는다면 어디에서 가장 흐름이 끊기는지도 궁금해짐.",
+        "emotional_reaction": "거창한 효과보다 자주 마주치는 한 장면이 달라지는지가 더 오래 기억에 남음.",
+        "result_proof": "결국 눈에 보이는 차이는 큰 표현보다 반복되던 번거로움이 줄어드는 순간에 드러남.",
+        "visual_desire": "작은 디테일이어도 자주 손이 가는 자리와 맞닿아 있으면 존재감이 꽤 선명해짐.",
+    }
+    default_closing = "결국 중요한 건 기능 이름보다, 자주 멈추게 되는 그 순간을 덜 번거롭게 만드는지임."
+    if len("\n\n".join(paragraphs)) < 150 and len(paragraphs) < 5:
+        paragraphs.append(closings.get(style, default_closing))
+    if len("\n\n".join(paragraphs)) < 150 and len(paragraphs) < 5:
+        paragraphs.append("손이 멈추던 지점을 떠올리면, 이 물건이 생활 속에서 맡는 역할도 훨씬 구체적으로 남음.")
+
+    selected: list[str] = []
+    for paragraph in paragraphs:
+        candidate = "\n\n".join([*selected, paragraph])
+        if len(candidate) > 250:
+            break
+        selected.append(paragraph)
+    return "\n\n".join(selected)
+
+
+def _threads_emotional_reaction_post(relatable: str) -> str:
+    paragraphs = [paragraph for paragraph in relatable.split("\n\n") if paragraph.strip()]
+    context = paragraphs[0] if paragraphs else relatable
+    return "\n\n".join(
+        [
+            "이건 장면부터 한 번 더 보게 됨.",
+            context,
+            "거창한 설명보다 실제로 쓰이는 순간이 먼저 기억에 남는 쪽.",
+        ]
+    )
 
 
 def generate_threads_comment(product_url: str, product_name: str = "") -> str:
