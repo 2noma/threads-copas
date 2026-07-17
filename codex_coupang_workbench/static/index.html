@@ -95,14 +95,14 @@
         <button id="step-product" class="step-button" type="button" role="tab" aria-selected="false" aria-controls="panel-product" tabindex="-1" data-studio-step="product">
           <span class="step-number">02</span><span><strong>상품</strong><small>쿠팡 검색과 딥링크</small></span>
         </button>
-        <button id="step-copy" class="step-button" type="button" role="tab" aria-selected="false" aria-controls="panel-copy" tabindex="-1" data-studio-step="copy">
-          <span class="step-number">03</span><span><strong>문구</strong><small>페르소나별 후킹 본문</small></span>
-        </button>
         <button id="step-rednote" class="step-button" type="button" role="tab" aria-selected="false" aria-controls="panel-rednote" tabindex="-1" data-studio-step="rednote">
-          <span class="step-number">04</span><span><strong>RedNote</strong><small>중국어 검색과 영상 선택</small></span>
+          <span class="step-number">03</span><span><strong>RedNote</strong><small>중국어 검색과 영상 선택</small></span>
         </button>
         <button id="step-media" class="step-button" type="button" role="tab" aria-selected="false" aria-controls="panel-media" tabindex="-1" data-studio-step="media">
-          <span class="step-number">05</span><span><strong>미디어</strong><small>영상 또는 대표 이미지</small></span>
+          <span class="step-number">04</span><span><strong>미디어</strong><small>영상 또는 대표 이미지</small></span>
+        </button>
+        <button id="step-copy" class="step-button" type="button" role="tab" aria-selected="false" aria-controls="panel-copy" tabindex="-1" data-studio-step="copy">
+          <span class="step-number">05</span><span><strong>문구</strong><small>최종 미디어 기반 후킹 본문</small></span>
         </button>
         <button id="step-publish" class="step-button" type="button" role="tab" aria-selected="false" aria-controls="panel-publish" tabindex="-1" data-studio-step="publish">
           <span class="step-number">06</span><span><strong>게시</strong><small>최종 확인과 발행</small></span>
@@ -136,7 +136,7 @@
         <section class="step-panel" id="panel-product" role="tabpanel" aria-labelledby="step-product" data-studio-panel="product" hidden>
           <div class="panel-heading">
             <div><span class="eyebrow">쿠팡 상품</span><h3>상품명으로 먼저 찾아보세요</h3></div>
-            <span class="panel-hint">최대 10개</span>
+            <span class="panel-hint">최대 30개</span>
           </div>
           <form id="product-search-form" class="search-form">
             <label class="sr-only" for="product-search-input">쿠팡 상품명 검색</label>
@@ -165,8 +165,11 @@
               <div class="empty-state"><strong>검색 결과가 여기에 표시됩니다.</strong><span>정확한 상품명을 입력하면 선택지가 더 좋아집니다.</span></div>
             </div>
           </div>
+          <div class="product-more-row">
+            <button class="button button-secondary" id="coupang-product-more-button" type="button" hidden>Chrome에서 더 보기</button>
+          </div>
           <p class="form-message" id="product-message" role="status"></p>
-          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="account">이전</button><button class="button button-primary" type="button" data-next-step="copy">문구 만들기</button></div>
+          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="account">이전</button><button class="button button-primary" id="prepare-media-button" type="button">미디어 찾기</button></div>
         </section>
 
         <section class="step-panel" id="panel-copy" role="tabpanel" aria-labelledby="step-copy" data-studio-panel="copy" hidden>
@@ -185,10 +188,11 @@
             <label for="product-facts-input">문구용 상품 정보 <span>자동 분석 후 수정 가능</span></label>
             <textarea id="product-facts-input" rows="5" maxlength="2000" placeholder="상품 선택 후 Chrome에서 확인한 상세 정보가 여기에 표시됩니다. 한 줄에 하나씩 수정하세요."></textarea>
             <p class="field-help">자동 분석한 사실만 문구에 사용합니다. 내용이 부정확하면 지우거나 직접 고치세요.</p>
+            <button class="button button-secondary" id="confirm-product-facts-button" type="button">상품 정보 확정</button>
           </div>
           <div id="threads-variant-selector">
             <div id="persona-grid" class="persona-grid" aria-live="polite">
-              <div class="empty-state"><strong>상품을 선택하면 6가지 문구를 만듭니다.</strong><span>짧고 직접적인 호기심 중심 문구로 구성됩니다.</span></div>
+              <div class="empty-state"><strong>상품을 선택하면 6가지 문구를 만듭니다.</strong><span>사용 장면이 이어지는 3~5문장 본문으로 구성됩니다.</span></div>
               <button type="button" data-thread-variant="relatable" hidden>현실 공감형</button>
               <button type="button" data-thread-variant="shock" hidden>충격 문장형</button>
               <button type="button" data-thread-variant="story" hidden>대화·사연형</button>
@@ -200,7 +204,7 @@
             <textarea id="selected-copy-text" rows="7" maxlength="500"></textarea>
           </div>
           <p class="form-message" id="copy-message" role="status"></p>
-          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="product">이전</button><button class="button button-primary" type="button" data-next-step="rednote">RedNote 찾기</button></div>
+          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="media">이전</button><button class="button button-primary" type="button" data-next-step="publish">최종 확인</button></div>
         </section>
 
         <section class="step-panel" id="panel-rednote" role="tabpanel" aria-labelledby="step-rednote" data-studio-panel="rednote" hidden>
@@ -215,24 +219,41 @@
             <button class="button button-primary" id="rednote-search-button" type="button">영상 검색</button>
           </div>
           <p class="field-help">쿠팡 검색어가 자동으로 입력됩니다. 필요하면 수정하세요. 한글 검색어는 중국어로 직역하고, 영어 검색어는 그대로 새 Chrome 탭에서 검색합니다.</p>
+          <label for="rednote-url">또는 RedNote 게시물 URL</label>
+          <div class="input-with-action query-actions">
+            <input id="rednote-url" maxlength="2000" placeholder="https://www.rednote.com/explore/..." autocomplete="off" inputmode="url" />
+            <button class="button button-secondary" id="download-rednote-url-button" type="button">URL로 영상 받기</button>
+          </div>
+          <p class="field-help">검색 결과 대신 RedNote 게시물 링크를 붙여 넣으면 그 게시물을 바로 엽니다.</p>
+          <section class="same-product-discovery" id="same-product-discovery" aria-labelledby="same-product-discovery-title">
+            <div>
+              <strong id="same-product-discovery-title">다른 곳에서 같은 상품 찾기</strong>
+              <span>Google Lens·Google·네이버쇼핑 탐색만 지원합니다. 발견한 미디어의 재사용 권한은 별도로 확인하세요.</span>
+            </div>
+            <div class="inline-actions">
+              <button class="button button-quiet" id="discover-google-lens-button" type="button" data-discovery-source="lens">Google Lens</button>
+              <button class="button button-quiet" id="discover-google-button" type="button" data-discovery-source="google">Google 검색</button>
+              <button class="button button-quiet" id="discover-naver-button" type="button" data-discovery-source="naver">네이버쇼핑</button>
+            </div>
+          </section>
           <div id="rednote-results" class="rednote-grid" aria-live="polite">
             <div class="empty-state"><strong>Chrome에서 찾은 영상만 여기에 표시됩니다.</strong><span>로그인이 풀렸다면 Chrome에서 RedNote에 먼저 로그인해주세요.</span></div>
           </div>
           <p class="form-message" id="rednote-message" role="status"></p>
-          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="copy">이전</button><button class="button button-primary" id="download-rednote-button" type="button">선택 영상 다운로드</button></div>
+          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="product">이전</button><div class="publish-buttons"><button class="button button-secondary" id="skip-media-button" type="button">미디어 없이 문구 만들기</button><button class="button button-primary" id="download-rednote-button" type="button">선택 영상 다운로드</button></div></div>
         </section>
 
         <section class="step-panel" id="panel-media" role="tabpanel" aria-labelledby="step-media" data-studio-panel="media" hidden>
           <div class="panel-heading">
-            <div><span class="eyebrow">미디어 구성</span><h3>영상 1개 + 대표 이미지 1장</h3></div>
+            <div><span class="eyebrow">미디어 구성</span><h3>미디어는 선택 · 사용 시 영상 1개 + 대표 이미지 1장</h3></div>
             <span class="panel-hint" id="representative-status">대표 장면 대기</span>
           </div>
           <div id="media-assets" class="media-assets" aria-live="polite">
             <div class="empty-state"><strong>영상을 선택하면 자동으로 대표 장면을 고릅니다.</strong><span>서로 다른 장면을 3~5장 JPG로 저장합니다.</span></div>
           </div>
-          <p class="field-help">영상 1개와 JPG 이미지 1장을 골라 캐러셀로 게시합니다. 각 종류에서 하나씩만 선택할 수 있습니다.</p>
+          <p class="field-help">영상 1개와 JPG 이미지 1장을 골라 캐러셀로 게시할 수 있습니다. 선택하면 대표 장면을 분석해 6개 문구를 다시 만들고, 미디어를 쓰지 않으면 기존 텍스트 문구로 게시합니다.</p>
           <p class="form-message" id="media-message" role="status"></p>
-          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="rednote">이전</button><button class="button button-primary" id="save-media-selection-button" type="button">선택 저장하고 최종 확인</button></div>
+          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="rednote">이전</button><div class="publish-buttons"><button class="button button-secondary" id="skip-media-selection-button" type="button">미디어 없이 문구 만들기</button><button class="button button-primary" id="save-media-selection-button" type="button">선택 저장하고 문구 만들기</button></div></div>
         </section>
 
         <section class="step-panel" id="panel-publish" role="tabpanel" aria-labelledby="step-publish" data-studio-panel="publish" hidden>
@@ -252,7 +273,7 @@
             <span>계정, 본문, 미디어, 광고 고지 댓글을 모두 확인했습니다.</span>
           </label>
           <p class="form-message" id="publish-message" role="status"></p>
-          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="media">이전</button><div class="publish-buttons"><button class="button button-secondary" id="retry-reply-button" type="button" hidden>댓글만 다시 게시</button><button class="button button-primary button-publish" id="studio-publish-button" type="button" disabled>Threads에 게시</button></div></div>
+          <div class="panel-footer"><button class="button button-quiet" type="button" data-prev-step="copy">이전</button><div class="publish-buttons"><button class="button button-secondary" id="retry-reply-button" type="button" hidden>댓글만 다시 게시</button><button class="button button-primary button-publish" id="studio-publish-button" type="button" disabled>Threads에 게시</button></div></div>
         </section>
 
         <section class="history-panel" aria-labelledby="history-title">

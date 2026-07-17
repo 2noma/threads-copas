@@ -54,8 +54,10 @@ def _choose_studio_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         try:
             listener.bind((STUDIO_HOST, STUDIO_PORT))
-        except OSError:
-            return _choose_loopback_port()
+        except OSError as exc:
+            raise LauncherError(
+                f"Studio 포트 {STUDIO_PORT}를 사용할 수 없습니다. 기존 Studio를 종료한 뒤 다시 실행하세요."
+            ) from exc
     return STUDIO_PORT
 
 

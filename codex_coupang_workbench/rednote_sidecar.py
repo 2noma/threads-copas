@@ -7,7 +7,7 @@ import re
 import socket
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -237,6 +237,7 @@ def _validated_canonical_rednote_url(value: str) -> str:
     except ValueError as exc:
         raise RedNoteSidecarError("RedNote URL is invalid") from exc
     note_id = parsed.path.removeprefix("/explore/")
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
     if (
         parsed.scheme != "https"
         or parsed.hostname != "www.rednote.com"
@@ -245,11 +246,12 @@ def _validated_canonical_rednote_url(value: str) -> str:
         or parsed.password is not None
         or parsed.path != f"/explore/{note_id}"
         or not _NOTE_ID.fullmatch(note_id)
-        or parsed.query
         or parsed.fragment
+        or any(key not in {"xsec_token", "xsec_source", "source"} or not item for key, item in query_pairs)
     ):
         raise RedNoteSidecarError("RedNote canonical URL is invalid")
-    return f"https://www.rednote.com/explore/{note_id}"
+    query = urlencode(query_pairs)
+    return f"https://www.rednote.com/explore/{note_id}" + (f"?{query}" if query else "")
 
 
 def _urlopen_transport(

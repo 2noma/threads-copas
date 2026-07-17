@@ -19,6 +19,7 @@ from .schemas import (
     ThreadsProfilePayload,
     ThreadsRemoteMediaPublishPayload,
     ThreadsRemotePublishPayload,
+    ThreadsRemoteReplyPayload,
 )
 from .storage import WorkbenchStore, utc_now
 from .threads import ThreadsApiClient, ThreadsApiError
@@ -136,6 +137,7 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         clean_comment = comment_text.strip()
         reply_id = ""
         if clean_comment:
+            reply_error: ThreadsApiError | None = None
             try:
                 reply = client.publish_reply(
                     threads_user_id=profile["threads_user_id"],
@@ -144,7 +146,27 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                     reply_to_id=post_id,
                 )
             except ThreadsApiError as exc:
-                error_detail = f"Threads reply failed after post publish: post_id={post_id}; error={exc}"
+                reply_error = exc
+                if exc.outcome_unknown:
+                    try:
+                        reply_id = client.find_owned_reply_id(
+                            post_id,
+                            profile["access_token"],
+                            clean_comment,
+                        )
+                    except ThreadsApiError:
+                        reply_id = ""
+            else:
+                reply_id = str(reply.get("id", "")).strip()
+                if not reply_id:
+                    reply_error = ThreadsApiError(
+                        "Threads reply response did not include an id"
+                    )
+            if reply_error is not None and not reply_id:
+                error_detail = (
+                    "Threads reply failed after post publish: "
+                    f"post_id={post_id}; error={reply_error}"
+                )
                 updated_job = store.mark_threads_published(
                     job_id=job["id"],
                     profile_key=profile_key,
@@ -161,11 +183,10 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                         "message": "Threads post was published, but reply publishing failed",
                         "threads_post_id": post_id,
                         "threads_reply_id": "",
-                        "error": str(exc),
+                        "error": str(reply_error),
                         "job": updated_job,
                     },
                 ) from None
-            reply_id = str(reply.get("id", "")).strip()
         updated_job = store.mark_threads_published(
             job_id=job["id"],
             profile_key=profile_key,
@@ -1074,6 +1095,47 @@ def create_threads_api_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             comment_text=payload.comment_text,
             store=store,
         )
+
+    @app.post("/api/threads/remote-reply")
+    def publish_remote_threads_reply(
+        payload: ThreadsRemoteReplyPayload,
+        request: Request,
+        store: WorkbenchStore = Depends(get_store),
+    ) -> dict[str, str]:
+        require_bridge_access(request)
+        profile = store.get_threads_profile(payload.profile_key, include_token=True)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Threads profile not found")
+        if not profile.get("is_connected"):
+            raise HTTPException(status_code=400, detail="Threads profile is not connected")
+        client = get_threads_client()
+        reply_id = ""
+        try:
+            reply = client.publish_reply(
+                threads_user_id=profile["threads_user_id"],
+                access_token=profile["access_token"],
+                text=payload.comment_text,
+                reply_to_id=payload.threads_post_id,
+            )
+            reply_id = str(reply.get("id") or "").strip()
+        except ThreadsApiError as exc:
+            if exc.outcome_unknown:
+                try:
+                    reply_id = client.find_owned_reply_id(
+                        payload.threads_post_id,
+                        profile["access_token"],
+                        payload.comment_text,
+                    )
+                except ThreadsApiError:
+                    reply_id = ""
+            if not reply_id:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+        if not reply_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Threads reply response did not include an id",
+            )
+        return {"threads_post_id": payload.threads_post_id, "threads_reply_id": reply_id}
 
     @app.post("/api/threads/remote-media-publish")
     def publish_remote_threads_media(

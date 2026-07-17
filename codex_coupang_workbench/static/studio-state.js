@@ -1,5 +1,38 @@
 const STORAGE_KEY = 'coupang-rednote-studio:v1';
-const STEPS = Object.freeze(['account', 'product', 'copy', 'rednote', 'media', 'publish']);
+const STEPS = Object.freeze(['account', 'product', 'rednote', 'media', 'copy', 'publish']);
+export const THREAD_PERSONA_KEYS = Object.freeze([
+  'result_proof',
+  'clever_use',
+  'visual_desire',
+  'emotional_reaction',
+  'relatable_problem',
+  'conversation',
+]);
+
+export function redNoteSourceQuery(state) {
+  return String(state?.selectedProduct?.product_name || state?.productKeyword || '').trim();
+}
+
+export function sameProductDiscoveryUrls(product) {
+  const productName = String(product?.productName || '').trim();
+  const rawImageUrl = String(product?.imageUrl || '').trim();
+  let lens = '';
+  try {
+    const parsed = new URL(rawImageUrl);
+    if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) {
+      lens = `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(rawImageUrl)}`;
+    }
+  } catch {
+    lens = '';
+  }
+  const googleParams = new URLSearchParams({ q: productName ? `"${productName}"` : '' });
+  const naverParams = new URLSearchParams({ query: productName });
+  return Object.freeze({
+    lens,
+    google: productName ? `https://www.google.com/search?${googleParams}` : '',
+    naver: productName ? `https://search.shopping.naver.com/search/all?${naverParams}` : '',
+  });
+}
 
 function emptyState() {
   return {
@@ -10,6 +43,7 @@ function emptyState() {
     productKeyword: '',
     productResults: [],
     selectedProduct: null,
+    hookCandidates: [],
     variants: [],
     selectedVariantId: '',
     commentText: '',
@@ -34,7 +68,7 @@ function serializableState(value) {
     'activeStep', 'jobId', 'selectedProfileKey', 'productKeyword', 'selectedVariantId',
     'commentText', 'rednoteSourceQuery', 'rednoteQuery', 'rednoteSearchId', 'selectedRednoteResultId', 'mediaMode',
   ];
-  const arrayFields = ['profiles', 'productResults', 'variants', 'rednoteResults', 'assets', 'selectedAssetIds', 'records'];
+  const arrayFields = ['profiles', 'productResults', 'hookCandidates', 'variants', 'rednoteResults', 'assets', 'selectedAssetIds', 'records'];
   for (const key of stringFields) {
     if (typeof value[key] === 'string') clean[key] = value[key];
   }
@@ -74,10 +108,10 @@ export function availableStudioSteps(state) {
   const available = new Set(['account']);
   const profileConnected = isSelectedProfileConnected(state);
   if (profileConnected) available.add('product');
-  if (profileConnected && state.selectedProduct) available.add('copy');
-  if (profileConnected && state.selectedVariantId) available.add('rednote');
+  if (profileConnected && state.selectedProduct && state.jobId) available.add('rednote');
   if (profileConnected && (state.selectedRednoteResultId || state.assets.length)) available.add('media');
-  if (profileConnected && state.preview && state.mediaMode && state.selectedAssetIds.length) available.add('publish');
+  if (profileConnected && state.selectedVariantId) available.add('copy');
+  if (profileConnected && state.preview) available.add('publish');
   return available;
 }
 
@@ -90,6 +124,21 @@ export function isSelectedProfileConnected(state) {
 
 export function isPublishPayloadLocked(preview) {
   return preview?.job?.publish_locked === true;
+}
+
+export function mergeProductSearchResults(initial, expanded, limit = 30) {
+  const cleanLimit = Number.isInteger(limit) ? Math.max(1, Math.min(limit, 30)) : 30;
+  const products = [];
+  const seen = new Set();
+  for (const product of [...(Array.isArray(initial) ? initial : []), ...(Array.isArray(expanded) ? expanded : [])]) {
+    if (!product || typeof product !== 'object' || Array.isArray(product)) continue;
+    const identity = String(product.product_id || product.product_url || '').trim();
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    products.push(product);
+    if (products.length >= cleanLimit) break;
+  }
+  return products;
 }
 
 export function createWorkflowRequestCoordinator() {

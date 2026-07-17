@@ -239,6 +239,25 @@ class ThreadsBridgeClient:
         )
         return _ensure_dict(response)
 
+    def retry_reply(
+        self,
+        *,
+        profile_key: str,
+        threads_post_id: str,
+        comment_text: str,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            "/api/threads/remote-reply",
+            data={
+                "profile_key": profile_key,
+                "threads_post_id": threads_post_id,
+                "comment_text": comment_text,
+            },
+            timeout=DEFAULT_BRIDGE_TIMEOUT,
+        )
+        return _ensure_dict(response)
+
     def refresh_profile(self, profile_key: str) -> dict[str, Any]:
         response = self._request("POST", f"/api/threads/profiles/{quote(profile_key, safe='')}/refresh")
         return _ensure_dict(response)

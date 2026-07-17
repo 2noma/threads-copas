@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Callable
 from subprocess import CompletedProcess
 from typing import Any
+from urllib.parse import quote, urljoin, urlsplit
 
 from .product_research import ProductContext
 
@@ -84,6 +85,10 @@ on run argv
       end try
     end repeat
     delay 2
+    try
+      tell targetTab to execute javascript "(() => { const target = document.querySelector('[data-value=detail]'); if (target) { target.scrollIntoView({block: 'center'}); target.click(); } })()"
+      delay 1.5
+    end try
     repeat with i from 1 to 14
       tell targetTab to execute javascript "window.scrollBy(0, Math.floor(window.innerHeight * 0.85));"
       delay 0.35
@@ -96,6 +101,54 @@ on run argv
         delay 0.25
       end repeat
     end try
+    tell targetTab to return execute javascript extractionScript
+  end tell
+end run
+""".strip()
+
+CHROME_SEARCH_EXTRACT_SCRIPT = r"""
+(() => {
+  const clean = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const links = Array.from(document.querySelectorAll('a[href*="/vp/products/"]'));
+  const products = links.map((link) => {
+    const card = link.closest('li, article, [data-product-id], [class*="search-product"], [class*="ProductUnit"]') || link.parentElement;
+    const image = card?.querySelector('img') || link.querySelector('img');
+    const nameNode = card?.querySelector('[class*="name"], [class*="title"]');
+    const priceNode = card?.querySelector('[class*="price"]');
+    return {
+      href: link.href || link.getAttribute('href') || "",
+      name: clean(link.getAttribute('title') || nameNode?.textContent || image?.getAttribute('alt') || link.textContent),
+      imageUrl: image?.currentSrc || image?.src || image?.getAttribute('data-img-src') || image?.getAttribute('data-src') || "",
+      priceText: clean(priceNode?.textContent || card?.textContent),
+      cardText: clean(card?.textContent),
+    };
+  });
+  return JSON.stringify({products});
+})()
+""".strip()
+
+CHROME_SEARCH_APPLESCRIPT = """
+on run argv
+  set targetUrl to item 1 of argv
+  set extractionScript to item 2 of argv
+  tell application "Google Chrome"
+    activate
+    if (count of windows) = 0 then make new window
+    set targetWindow to front window
+    set targetTab to make new tab at end of tabs of targetWindow with properties {URL:targetUrl}
+    set active tab index of targetWindow to (count of tabs of targetWindow)
+    repeat with i from 1 to 80
+      delay 0.25
+      try
+        tell targetTab to set readyState to execute javascript "document.readyState"
+        if readyState is "interactive" or readyState is "complete" then exit repeat
+      end try
+    end repeat
+    delay 1.5
+    repeat with i from 1 to 14
+      tell targetTab to execute javascript "window.scrollBy(0, Math.floor(window.innerHeight * 0.9));"
+      delay 0.3
+    end repeat
     tell targetTab to return execute javascript extractionScript
   end tell
 end run
@@ -135,6 +188,93 @@ def fetch_chrome_product_context(
     return _context_from_payload(clean_url, completed.stdout)
 
 
+def search_chrome_products(
+    keyword: str,
+    *,
+    limit: int = 30,
+    timeout: float = 30.0,
+    runner: Callable[..., CompletedProcess[str]] | None = None,
+) -> list[dict[str, Any]]:
+    clean_keyword = _clean_text(keyword)[:50]
+    if not clean_keyword:
+        raise LocalChromeError("검색할 상품명을 입력해 주세요.")
+    clean_limit = max(1, min(int(limit), 30))
+    search_url = f"https://www.coupang.com/np/search?q={quote(clean_keyword, safe='')}"
+    run = runner or subprocess.run
+    if runner is None and shutil.which("osascript") is None:
+        raise LocalChromeError("Chrome 상품 검색은 macOS Google Chrome에서만 사용할 수 있습니다.")
+    try:
+        completed = run(
+            ["osascript", "-e", CHROME_SEARCH_APPLESCRIPT, search_url, CHROME_SEARCH_EXTRACT_SCRIPT],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LocalChromeError("Chrome 상품 검색 시간이 초과되었습니다.") from exc
+    except OSError as exc:
+        raise LocalChromeError("Chrome을 실행하거나 제어하지 못했습니다.") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        message = "Chrome에서 쿠팡 검색 결과를 읽지 못했습니다."
+        if detail:
+            message = f"{message} {detail}"
+        raise LocalChromeError(message)
+    return _products_from_search_payload(completed.stdout, limit=clean_limit)
+
+
+def _products_from_search_payload(raw_payload: str, *, limit: int) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(raw_payload.strip())
+    except json.JSONDecodeError as exc:
+        raise LocalChromeError("Chrome 검색 응답을 해석하지 못했습니다.") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("products"), list):
+        raise LocalChromeError("Chrome 검색 응답 형식이 올바르지 않습니다.")
+
+    products: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw_product in payload["products"]:
+        if not isinstance(raw_product, dict):
+            continue
+        product_url = _normalize_coupang_product_url(_clean_text(raw_product.get("href")))
+        match = re.search(r"/vp/products/(\d+)", product_url)
+        product_name = _clean_text(raw_product.get("name"))[:300]
+        if not match or not product_name:
+            continue
+        product_id = match.group(1)
+        if product_id in seen_ids:
+            continue
+        seen_ids.add(product_id)
+        price_text = _clean_text(raw_product.get("priceText"))
+        price_match = re.search(r"(\d[\d,]*)\s*원", price_text)
+        price_digits = re.sub(r"\D", "", price_match.group(1) if price_match else price_text)
+        card_text = _clean_text(raw_product.get("cardText"))
+        products.append(
+            {
+                "product_id": product_id,
+                "product_name": product_name,
+                "product_url": product_url,
+                "image_url": _normalize_url(_clean_text(raw_product.get("imageUrl"))),
+                "price": int(price_digits or 0),
+                "is_rocket": "로켓" in card_text,
+            }
+        )
+        if len(products) >= limit:
+            break
+    return products
+
+
+def _normalize_coupang_product_url(value: str) -> str:
+    if not value:
+        return ""
+    absolute = urljoin("https://www.coupang.com", value)
+    parsed = urlsplit(absolute)
+    if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith("coupang.com"):
+        return ""
+    return absolute
+
+
 def _context_from_payload(product_url: str, raw_payload: str) -> ProductContext:
     try:
         payload = json.loads(raw_payload.strip())
@@ -152,6 +292,7 @@ def _context_from_payload(product_url: str, raw_payload: str) -> ProductContext:
         page_title=title,
         image_url=_normalize_url(_clean_text(payload.get("imageUrl"))),
         facts=_facts_from_payload(payload),
+        detail_images=[_normalize_url(url) for url in _clean_list(payload.get("detailImages")) if _normalize_url(url)][:20],
     )
 
 
@@ -200,6 +341,12 @@ def _clean_text(value: Any) -> str:
 def _normalize_url(value: str) -> str:
     if value.startswith("//"):
         return f"https:{value}"
+    parsed = urlsplit(value)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme == "http" and (
+        hostname == "coupangcdn.com" or hostname.endswith(".coupangcdn.com")
+    ):
+        return parsed._replace(scheme="https").geturl()
     return value
 
 

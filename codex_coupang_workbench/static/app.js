@@ -6,9 +6,12 @@ import {
   createWorkflowRequestCoordinator,
   isPublishPayloadLocked,
   isSelectedProfileConnected,
+  mergeProductSearchResults,
   publishRetryPresentation,
+  redNoteSourceQuery,
   resolvePreviewProfile,
   safeThreadsOAuthUrl,
+  sameProductDiscoveryUrls,
   tabIndexForNavigationKey,
 } from './studio-state.js';
 
@@ -16,9 +19,9 @@ const APP_BASE_PATH = window.location.pathname.startsWith('/threads-copas') ? '/
 const STEP_META = Object.freeze({
   account: ['STEP 01', '먼저 발행 계정을 골라주세요'],
   product: ['STEP 02', '콘텐츠로 만들 상품을 찾아보세요'],
-  copy: ['STEP 03', '가장 눈에 들어오는 문구를 골라주세요'],
-  rednote: ['STEP 04', '상품 맥락에 맞는 RedNote 영상을 찾아보세요'],
-  media: ['STEP 05', '영상 또는 대표 이미지를 구성하세요'],
+  rednote: ['STEP 03', '상품 맥락에 맞는 RedNote 영상을 찾아보세요'],
+  media: ['STEP 04', '영상 또는 대표 이미지를 구성하세요'],
+  copy: ['STEP 05', '최종 미디어에 맞는 문구를 골라주세요'],
   publish: ['STEP 06', '게시되는 모든 내용을 마지막으로 확인하세요'],
 });
 
@@ -26,6 +29,7 @@ const store = createStudioStore();
 const mediaCapture = new StudioMediaCapture();
 const workflowRequests = createWorkflowRequestCoordinator();
 const busyOwners = new WeakMap();
+let selectedProductAnalysis = null;
 const STALE_WORKFLOW_RESPONSE = Symbol('stale workflow response');
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -226,9 +230,14 @@ function completedSteps(state) {
   const steps = new Set();
   if (isSelectedProfileConnected(state)) steps.add('account');
   if (state.selectedProduct) steps.add('product');
-  if (state.selectedVariantId) steps.add('copy');
-  if (state.selectedRednoteResultId || state.assets.length) steps.add('rednote');
-  if (state.mediaMode && state.selectedAssetIds.length) steps.add('media');
+  if (state.selectedVariantId) {
+    steps.add('rednote');
+    steps.add('media');
+    steps.add('copy');
+  } else {
+    if (state.selectedRednoteResultId || state.assets.length) steps.add('rednote');
+    if (state.mediaMode && state.selectedAssetIds.length) steps.add('media');
+  }
   if (state.preview?.job?.publish_stage === 'published') steps.add('publish');
   return steps;
 }
@@ -247,7 +256,7 @@ function renderSummary(state) {
       ? `이미지 ${state.selectedAssetIds.length}장`
       : state.mediaMode === 'mixed'
         ? '영상 1개 · 이미지 1장'
-      : '선택 전';
+      : state.selectedVariantId ? '미디어 없음' : '선택 전';
   const count = completedSteps(state).size;
   $('#summary-progress-bar').style.width = `${Math.round((count / 6) * 100)}%`;
   $('#summary-progress-label').textContent = `${count} / 6 단계 완료`;
@@ -260,6 +269,7 @@ function renderState(state) {
   renderProducts(state);
   renderVariants(state);
   renderRedNoteResults(state);
+  renderSameProductDiscovery(state);
   renderMediaAssets(state);
   renderFinalPreview(state);
   renderHistory(state);
@@ -270,7 +280,10 @@ function renderState(state) {
     '#save-copy-button',
     '#regenerate-query-button',
     '#rednote-search-button',
+    '#download-rednote-url-button',
     '#download-rednote-button',
+    '#skip-media-button',
+    '#skip-media-selection-button',
     '#save-media-selection-button',
   ].forEach((selector) => {
     $(selector).disabled = publishPayloadLocked;
@@ -361,6 +374,7 @@ async function loadProfiles() {
       selectedProfileKey,
       ...(selectionWasInvalidated ? {
         jobId: '',
+        hookCandidates: [],
         variants: [],
         selectedVariantId: '',
         commentText: '',
@@ -445,6 +459,7 @@ async function searchProducts(event) {
   const keyword = $('#product-search-input').value.trim();
   if (!keyword) return;
   invalidateWorkflowRequests();
+  $('#coupang-product-more-button').hidden = true;
   await withBusy(button, '검색 중', async () => {
     showMessage('#product-message', '쿠팡 상품을 찾고 있습니다.');
     try {
@@ -461,6 +476,7 @@ async function searchProducts(event) {
         productResults: response.products,
         selectedProduct: null,
         jobId: '',
+        hookCandidates: [],
         variants: [],
         selectedVariantId: '',
         commentText: '',
@@ -475,8 +491,35 @@ async function searchProducts(event) {
         selectedAssetIds: [],
         preview: null,
       });
+      $('#coupang-product-more-button').hidden = response.products.length === 0;
       showMessage('#product-message', response.products.length ? `${response.products.length}개를 찾았습니다.` : '검색 결과가 없습니다.');
     } catch (error) {
+      showMessage('#product-message', error.message);
+    }
+  });
+}
+
+async function loadMoreProducts(button) {
+  const state = store.getState();
+  const keyword = state.productKeyword.trim();
+  if (!keyword || !state.productResults.length) return;
+  button.hidden = true;
+  await withBusy(button, 'Chrome 검색 중', async () => {
+    showMessage('#product-message', 'Chrome에서 쿠팡 검색 결과를 더 가져오고 있습니다.');
+    try {
+      const response = await runWorkflowRequest('product-search-more', (request) => (
+        api('/api/coupang/products/search/more', {
+          method: 'POST',
+          signal: request.signal,
+          body: JSON.stringify({ keyword, limit: 30 }),
+        })
+      ));
+      if (response === STALE_WORKFLOW_RESPONSE) return;
+      const products = mergeProductSearchResults(state.productResults, response.products, 30);
+      store.patch({ productResults: products });
+      showMessage('#product-message', `${products.length}개까지 확장했습니다.`);
+    } catch (error) {
+      button.hidden = false;
       showMessage('#product-message', error.message);
     }
   });
@@ -509,6 +552,7 @@ function selectWorkflowProduct(product) {
   store.patch({
     jobId: '',
     selectedProduct: product,
+    hookCandidates: [],
     variants: [],
     selectedVariantId: '',
     commentText: '',
@@ -523,7 +567,30 @@ function selectWorkflowProduct(product) {
     preview: null,
   });
   showMessage('#product-message', `"${product.product_name}"을 선택했습니다. Chrome에서 상세 정보를 분석하고 있습니다.`);
-  void enrichSelectedProductWithChromeContext(product);
+  void trackSelectedProductAnalysis(product);
+}
+
+function productIdentity(product) {
+  return String(product?.product_id || product?.product_url || '').trim();
+}
+
+function trackSelectedProductAnalysis(product) {
+  const identity = productIdentity(product);
+  const promise = enrichSelectedProductWithChromeContext(product);
+  selectedProductAnalysis = { identity, promise };
+  void promise.finally(() => {
+    if (selectedProductAnalysis?.promise === promise) selectedProductAnalysis = null;
+  });
+  return promise;
+}
+
+async function awaitSelectedProductAnalysis(product) {
+  const identity = productIdentity(product);
+  if (selectedProductAnalysis?.identity === identity) {
+    await selectedProductAnalysis.promise;
+  }
+  const current = store.getState().selectedProduct;
+  return productIdentity(current) === identity ? current : null;
 }
 
 function normalizedProductFacts(value) {
@@ -544,7 +611,7 @@ async function enrichSelectedProductWithChromeContext(product) {
   if (!productUrl) return;
   try {
     const context = await runWorkflowRequest('product-context', (request) => (
-      api('/api/coupang/chrome-product-context', {
+      api('/api/coupang/detail-image-analysis', {
         method: 'POST',
         signal: request.signal,
         body: JSON.stringify({ product_url: productUrl }),
@@ -566,7 +633,7 @@ async function enrichSelectedProductWithChromeContext(product) {
         facts,
       },
     });
-    showMessage('#product-message', '자동 분석한 상품 정보를 문구 생성에 반영했습니다.');
+    showMessage('#product-message', `자동 분석한 상품 정보를 문구 생성에 반영했습니다. 쿠팡 상세 이미지 ${context.detail_image_count || 0}장을 분석했으며, 문구용 상품 정보에서 확인·수정할 수 있습니다.`);
   } catch (error) {
     const current = store.getState().selectedProduct;
     if (current?.product_url === productUrl) {
@@ -638,6 +705,55 @@ async function useChromeProductContext(button) {
   });
 }
 
+async function prepareMediaSearch(button) {
+  const state = store.getState();
+  const product = state.selectedProduct;
+  if (!product) {
+    showMessage('#product-message', '상품을 먼저 선택해주세요.');
+    return;
+  }
+  if (!isSelectedProfileConnected(state)) {
+    showMessage('#product-message', '연결된 Threads 계정을 먼저 선택해주세요.');
+    return;
+  }
+  if (state.jobId) {
+    activeStep('rednote');
+    return;
+  }
+  await withBusy(button, '작업 준비 중', async () => {
+    try {
+      const analyzedProduct = await awaitSelectedProductAnalysis(product);
+      if (!analyzedProduct) return;
+      invalidateWorkflowRequests();
+      const response = await runWorkflowRequest('prepare-media', (request) => (
+        api('/api/jobs', {
+          method: 'POST',
+          signal: request.signal,
+          body: JSON.stringify({
+            product_url: analyzedProduct.partner_url || analyzedProduct.product_url,
+            product_name: analyzedProduct.product_name,
+            image_url: analyzedProduct.image_url || '',
+          }),
+        })
+      ));
+      if (response === STALE_WORKFLOW_RESPONSE) return;
+      store.patch({
+        jobId: response.id,
+        hookCandidates: [],
+        variants: [],
+        selectedVariantId: '',
+        commentText: '',
+        preview: null,
+      });
+      prefillRedNoteSourceQuery();
+      activeStep('rednote');
+      showMessage('#rednote-message', '미디어를 먼저 찾고, 선택이 끝난 뒤 문구를 한 번만 만듭니다.');
+    } catch (error) {
+      showMessage('#product-message', error.message);
+    }
+  });
+}
+
 function createCodexThreadsPrompt(product = store.getState().selectedProduct, productFacts = product?.facts || []) {
   if (!product) return '';
   const facts = Array.isArray(productFacts) && productFacts.length
@@ -646,14 +762,16 @@ function createCodexThreadsPrompt(product = store.getState().selectedProduct, pr
   return [
     '실제 사용 맥락이 자연스럽게 이어지는 Threads 본문을 작성해줘.',
     '독자가 겪어봤을 법한 구체적인 불편이나 순간으로 시작해.',
-    '해결 방법을 바로 밝히지 않는 방식으로 궁금증을 남겨.',
+    '상품을 해설하지 말고 불편이 생기는 순간과 쓰임을 바로 이어줘.',
+    '관찰했다거나 이유를 알았다고 결론내리지 마.',
     '문장 연결과 인과관계를 우선해.',
     '억지 반전, 랜덤 비유, 과장된 결과를 만들지 마.',
     '실제로 사용했다는 1인칭 후기나 가족의 반응을 지어내지 마.',
     '각 줄은 자연스러운 한국어로 의미를 완결해.',
     '링크, 광고 고지, 해시태그, 정확한 상품명은 본문에 넣지 마.',
-    '1~2개 짧은 문장, 공백과 문장부호를 포함해 90자 이내의 자연스러운 한국어로 작성해.',
-    '가능하면 45~75자로 끝내고 같은 맥락을 반복하지 마.',
+    '3~5개의 짧은 문장, 공백과 문장부호를 포함해 150~250자의 자연스러운 한국어로 작성해.',
+    '불편한 상황 → 상품이 쓰이는 장면 → 구체적인 변화나 반응 순서로 자연스럽게 이어줘.',
+    '같은 맥락을 반복해 글자 수만 늘리지 말고 각 문장에 새로운 상황이나 근거를 담아줘.',
     '~요, ~습니다, ~세요 같은 높임말 종결 없이 짧은 반말 구어체로 써.',
     '',
     `내부 참고용 상품명: ${product.product_name || ''}`,
@@ -663,30 +781,30 @@ function createCodexThreadsPrompt(product = store.getState().selectedProduct, pr
   ].join('\n');
 }
 
-async function generateCopy({ regenerate = false } = {}) {
+async function generateCopy({ regenerate = false, afterMediaDecision = false } = {}) {
   const state = store.getState();
-  if (rejectPublishPayloadEdit('#copy-message')) return;
+  if (rejectPublishPayloadEdit('#copy-message')) return false;
   const product = state.selectedProduct;
   if (!product) {
     showMessage('#copy-message', '상품을 먼저 선택해주세요.');
-    return;
+    return false;
   }
   if (!isSelectedProfileConnected(state)) {
     showMessage('#copy-message', '연결된 Threads 계정을 먼저 선택해주세요.');
-    return;
+    return false;
   }
   invalidateWorkflowRequests();
   const facts = productFactsForCopy(product);
   const productWithFacts = { ...product, facts };
   store.patch({ selectedProduct: productWithFacts });
-  const button = regenerate ? $('#regenerate-copy-button') : $('#generate-copy-button');
-  await withBusy(button, '문구 만드는 중', async () => {
+  const button = afterMediaDecision ? null : (regenerate ? $('#regenerate-copy-button') : $('#generate-copy-button'));
+  return withBusy(button, '문구 만드는 중', async () => {
     showMessage('#copy-message', 'Codex가 페르소나별 문구를 만들고 있습니다.');
     try {
       const currentVariant = selectedVariant();
       const configuredPrompt = $('#settings-form').elements.codex_threads_prompt?.value.trim() || '';
       const payload = {
-        job_id: regenerate ? state.jobId : '',
+        job_id: state.jobId || '',
         profile_key: state.selectedProfileKey,
         product_url: productWithFacts.product_url,
         partner_url: productWithFacts.partner_url || '',
@@ -704,26 +822,21 @@ async function generateCopy({ regenerate = false } = {}) {
           body: JSON.stringify(payload),
         })
       ));
-      if (response === STALE_WORKFLOW_RESPONSE) return;
+      if (response === STALE_WORKFLOW_RESPONSE) return false;
       store.patch({
         jobId: response.job.id,
         selectedProduct: { ...productWithFacts, product_name: response.job.product_name, product_url: response.job.product_url },
+        hookCandidates: response.hook_candidates || [],
         variants: response.variants,
         selectedVariantId: response.selected_variant_id,
         commentText: response.comment_text,
-        rednoteQuery: '',
-        rednoteQueryGeneration: 0,
-        rednoteSearchId: '',
-        rednoteResults: [],
-        selectedRednoteResultId: '',
-        assets: [],
-        mediaMode: '',
-        selectedAssetIds: [],
         preview: null,
       });
       showMessage('#copy-message', `${response.variants.length}개 버전을 만들었습니다.`);
+      return response;
     } catch (error) {
       showMessage('#copy-message', error.message);
+      return false;
     }
   });
 }
@@ -734,7 +847,7 @@ function renderVariants(state) {
       const selected = variant.id === state.selectedVariantId;
       return `<article class="persona-card${selected ? ' is-selected' : ''}"><button type="button" data-variant-id="${escapeHtml(variant.id)}" aria-pressed="${selected}"><span class="persona-label">${escapeHtml(variant.label || variant.persona_label || variant.persona_key)}<small>${variant.generation > 1 ? `${variant.generation}번째` : '첫 생성'}</small></span><span class="persona-copy">${escapeHtml(variant.text || variant.body || '')}</span></button></article>`;
     }).join('')
-    : '<div class="empty-state"><strong>상품을 선택하면 6가지 문구를 만듭니다.</strong><span>짧고 직접적인 호기심 중심 문구로 구성됩니다.</span></div>';
+    : '<div class="empty-state"><strong>상품을 선택하면 6가지 문구를 만듭니다.</strong><span>사용 장면이 이어지는 3~5문장 본문으로 구성됩니다.</span></div>';
   const variant = selectedVariant();
   $('#selected-copy-editor').hidden = !variant;
   $('#selected-copy-text').value = variant?.text || variant?.body || '';
@@ -808,14 +921,10 @@ async function saveCopyEdit(button) {
   });
 }
 
-function coupangRedNoteSourceQuery(state = store.getState()) {
-  return String(state.productKeyword || state.selectedProduct?.product_name || '').trim();
-}
-
 function prefillRedNoteSourceQuery() {
   const state = store.getState();
   if (state.rednoteSourceQuery.trim()) return;
-  const sourceQuery = coupangRedNoteSourceQuery(state);
+  const sourceQuery = redNoteSourceQuery(state);
   if (sourceQuery) store.patch({ rednoteSourceQuery: sourceQuery });
 }
 
@@ -838,9 +947,9 @@ function resetRedNoteSourceQuery() {
   const state = store.getState();
   if (rejectPublishPayloadEdit('#rednote-message')) return;
   invalidateWorkflowRequests();
-  const sourceQuery = coupangRedNoteSourceQuery(state);
+  const sourceQuery = redNoteSourceQuery(state);
   clearRedNoteSearchState(sourceQuery);
-  showMessage('#rednote-message', sourceQuery ? '쿠팡 검색어를 다시 입력했습니다.' : '쿠팡 검색어를 먼저 입력해주세요.');
+  showMessage('#rednote-message', sourceQuery ? '분석된 쿠팡 상품명을 다시 입력했습니다.' : '쿠팡 상품명을 먼저 확인해주세요.');
 }
 
 function updateRedNoteSourceQuery(event) {
@@ -870,7 +979,7 @@ async function searchRedNote(button) {
           signal: request.signal,
           body: JSON.stringify({
             source_keyword: sourceQuery,
-            product_facts: state.selectedProduct?.facts || [],
+            product_facts: productFactsForCopy(state.selectedProduct),
           }),
         });
         const search = await api(`/api/jobs/${encodeURIComponent(state.jobId)}/rednote-search`, {
@@ -916,6 +1025,34 @@ function renderRedNoteResults(state) {
     : '<div class="empty-state"><strong>Chrome에서 찾은 영상만 여기에 표시됩니다.</strong><span>로그인이 풀렸다면 Chrome에서 RedNote에 먼저 로그인해주세요.</span></div>';
 }
 
+function renderSameProductDiscovery(state) {
+  const product = state.selectedProduct || {};
+  const urls = sameProductDiscoveryUrls({
+    productName: product.product_name,
+    imageUrl: product.image_url,
+  });
+  $('#discover-google-lens-button').disabled = !urls.lens;
+  $('#discover-google-button').disabled = !urls.google;
+  $('#discover-naver-button').disabled = !urls.naver;
+}
+
+function openSameProductDiscovery(source) {
+  const product = store.getState().selectedProduct || {};
+  const urls = sameProductDiscoveryUrls({
+    productName: product.product_name,
+    imageUrl: product.image_url,
+  });
+  const url = urls[source] || '';
+  if (!url) {
+    showMessage('#rednote-message', source === 'lens'
+      ? '상품 대표 이미지가 없어 Google Lens를 열 수 없습니다.'
+      : '정확한 상품명을 먼저 확인해주세요.');
+    return;
+  }
+  const popup = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!popup) showMessage('#rednote-message', '새 창이 차단되었습니다. 브라우저 팝업 설정을 확인해주세요.');
+}
+
 function chooseRedNoteResult(resultId) {
   if (rejectPublishPayloadEdit('#rednote-message')) return;
   if (!store.getState().rednoteResults.some((result) => result.result_id === resultId)) return;
@@ -958,6 +1095,46 @@ async function downloadRedNote(button) {
       const assets = completed.assets || [];
       store.patch({ assets, mediaMode: 'mixed', selectedAssetIds: defaultMixedAssetIds(assets) });
       $('#representative-status').textContent = `대표 장면 ${completed.frame_count}장 저장됨`;
+      activeStep('media');
+    } catch (error) {
+      $('#representative-status').textContent = '대표 장면 실패';
+      showMessage('#rednote-message', error.name === 'AbortError' ? '이전 작업을 중단했습니다.' : error.message);
+    }
+  });
+}
+
+async function downloadRedNoteUrl(button) {
+  const state = store.getState();
+  if (rejectPublishPayloadEdit('#rednote-message')) return;
+  const url = $('#rednote-url').value.trim();
+  if (!state.jobId || !url) {
+    showMessage('#rednote-message', 'RedNote 게시물 URL을 입력해주세요.');
+    return;
+  }
+  invalidateWorkflowRequests();
+  await withBusy(button, 'URL 열기·다운로드 중', async () => {
+    try {
+      const completed = await runWorkflowRequest('rednote-url', async (request) => {
+        await api(`/api/jobs/${encodeURIComponent(state.jobId)}/rednote-url`, {
+          method: 'POST', signal: request.signal, body: JSON.stringify({ url }),
+        });
+        if (!request.isCurrent()) return null;
+        $('#representative-status').textContent = '대표 장면 분석 중';
+        return mediaCapture.start({
+          jobId: state.jobId, basePath: APP_BASE_PATH,
+          onProgress(progress) {
+            if (!request.isCurrent()) return;
+            $('#representative-status').textContent = progress.phase === 'analyzing'
+              ? `장면 분석 ${progress.completed}/${progress.total}`
+              : `JPG 저장 ${progress.completed}/${progress.total}`;
+          },
+        });
+      });
+      if (completed === STALE_WORKFLOW_RESPONSE) return;
+      const assets = completed.assets || [];
+      store.patch({ assets, mediaMode: 'mixed', selectedAssetIds: defaultMixedAssetIds(assets), preview: null });
+      $('#representative-status').textContent = `대표 장면 ${completed.frame_count}장 저장됨`;
+      showMessage('#rednote-message', 'URL의 영상을 받았습니다. 대표 장면을 골라주세요.');
       activeStep('media');
     } catch (error) {
       $('#representative-status').textContent = '대표 장면 실패';
@@ -1019,8 +1196,47 @@ async function saveMediaSelection(button) {
       ));
       if (response === STALE_WORKFLOW_RESPONSE) return;
       store.patch({ assets: response.assets, selectedAssetIds: response.selected_asset_ids, mediaMode: response.media_mode });
-      await loadStudioPreview();
-      activeStep('publish');
+      await generateCopyAfterMediaDecision({ hasMedia: true });
+    } catch (error) {
+      showMessage('#media-message', error.message);
+    }
+  });
+}
+
+async function generateCopyAfterMediaDecision({ hasMedia }) {
+  showMessage(
+    '#media-message',
+    hasMedia ? '선택한 대표 장면을 분석해 문구를 만들고 있습니다.' : '상품 정보로 텍스트 문구를 만들고 있습니다.',
+  );
+  const response = await generateCopy({ afterMediaDecision: true });
+  if (!response) {
+    showMessage('#media-message', hasMedia
+      ? '미디어는 저장했지만 문구를 만들지 못했습니다. 다시 시도해주세요.'
+      : '텍스트 문구를 만들지 못했습니다. 다시 시도해주세요.');
+    return false;
+  }
+  await loadStudioPreview();
+  activeStep('copy');
+  showMessage('#copy-message', response.media_copy_error || (hasMedia
+    ? '선택한 대표 장면을 분석해 문구를 만들었습니다.'
+    : '상품 정보만으로 텍스트 문구를 만들었습니다.'));
+  return true;
+}
+
+async function skipMedia(button) {
+  const state = store.getState();
+  if (rejectPublishPayloadEdit('#media-message')) return;
+  invalidateWorkflowRequests();
+  await withBusy(button, '문구 준비 중', async () => {
+    try {
+      const response = await runWorkflowRequest('media-selection', (request) => (
+        api(`/api/jobs/${encodeURIComponent(state.jobId)}/media-selection`, {
+          method: 'PATCH', signal: request.signal, body: JSON.stringify({ mode: '', asset_ids: [] }),
+        })
+      ));
+      if (response === STALE_WORKFLOW_RESPONSE) return;
+      store.patch({ assets: response.assets, selectedAssetIds: [], mediaMode: '', preview: null });
+      await generateCopyAfterMediaDecision({ hasMedia: false });
     } catch (error) {
       showMessage('#media-message', error.message);
     }
@@ -1076,13 +1292,28 @@ async function publishStudio(button, retry = false) {
   }
   await withBusy(button, retry ? retryPresentation.busyLabel : 'Threads 게시 중', async () => {
     try {
-      const response = await runWorkflowRequest('threads-publish', (request) => (
-        api(`/api/jobs/${encodeURIComponent(state.jobId)}/${retry ? 'threads-media-retry' : 'threads-media-publish'}`, {
-          method: 'POST',
-          signal: request.signal,
-          body: '{}',
-        })
-      ));
+      const hasMedia = Boolean((state.preview.media_mode || state.mediaMode) && (state.preview.selected_rednote_assets || []).length);
+      const response = await runWorkflowRequest('threads-publish', (request) => {
+        if (hasMedia) {
+          return api(`/api/jobs/${encodeURIComponent(state.jobId)}/${retry ? 'threads-media-retry' : 'threads-media-publish'}`, {
+            method: 'POST', signal: request.signal, body: '{}',
+          });
+        }
+        if (retry && retryPresentation.kind === 'reply') {
+          return api(`/api/jobs/${encodeURIComponent(state.jobId)}/threads-reply-retry`, {
+            method: 'POST', signal: request.signal, body: '{}',
+          });
+        }
+        return api('/api/threads/publish', {
+          method: 'POST', signal: request.signal,
+          body: JSON.stringify({
+            profile_key: state.selectedProfileKey,
+            job_id: state.jobId,
+            text: state.preview.text || '',
+            comment_text: state.preview.comment_text || '',
+          }),
+        });
+      });
       if (response === STALE_WORKFLOW_RESPONSE) return;
       store.patch({ preview: { ...state.preview, ...response, job: response.job || state.preview.job } });
       showMessage('#publish-message', response.partial
@@ -1164,6 +1395,7 @@ async function restoreJob() {
       preview,
       selectedProfileKey: job.selected_profile_key || state.selectedProfileKey,
       selectedProduct: { product_name: job.product_name, product_url: job.product_url, image_url: job.image_url || '', facts: [] },
+      hookCandidates: preview.hook_candidates || [],
       variants,
       selectedVariantId: job.selected_copy_variant_id || preview.selected_copy_variant?.id || '',
       rednoteSourceQuery: state.rednoteSourceQuery || state.productKeyword || job.product_name || '',
@@ -1198,6 +1430,7 @@ function bindEvents() {
     store.patch({
       selectedProfileKey,
       jobId: '',
+      hookCandidates: [],
       variants: [],
       selectedVariantId: '',
       commentText: '',
@@ -1219,13 +1452,27 @@ function bindEvents() {
     if (button) void runProfileAction(button.dataset.profileAction, button.dataset.profileKey, button);
   });
   $('#product-search-form').addEventListener('submit', searchProducts);
+  $('#coupang-product-more-button').addEventListener('click', (event) => void loadMoreProducts(event.currentTarget));
   $('#product-results').addEventListener('click', (event) => {
     const button = event.target.closest('[data-product-id]');
     if (button) selectProduct(button.dataset.productId);
   });
   $('#manual-product-button').addEventListener('click', (event) => void useManualProduct(event.currentTarget));
   $('#coupang-chrome-preview-button').addEventListener('click', (event) => void useChromeProductContext(event.currentTarget));
+  $('#prepare-media-button').addEventListener('click', (event) => void prepareMediaSearch(event.currentTarget));
   $('#generate-copy-button').addEventListener('click', () => void generateCopy());
+  $('#product-facts-input').addEventListener('input', (event) => {
+    const selected = store.getState().selectedProduct;
+    if (selected) store.patch({ selectedProduct: { ...selected, facts: normalizedProductFacts(event.currentTarget.value) } });
+  });
+  $('#confirm-product-facts-button').addEventListener('click', (event) => {
+    const selected = store.getState().selectedProduct;
+    const facts = productFactsForCopy(selected);
+    if (!selected || !facts.length) return showMessage('#copy-message', '확정할 상품 정보를 한 줄 이상 입력해주세요.');
+    store.patch({ selectedProduct: { ...selected, facts } });
+    event.currentTarget.textContent = '상품 정보 확정됨';
+    showMessage('#copy-message', '확정한 상품 정보로 Threads 문구와 RedNote 검색어를 만듭니다.');
+  });
   $('#regenerate-copy-button').addEventListener('click', () => void generateCopy({ regenerate: true }));
   $('#save-copy-button').addEventListener('click', (event) => void saveCopyEdit(event.currentTarget));
   $('#persona-grid').addEventListener('click', (event) => {
@@ -1235,9 +1482,14 @@ function bindEvents() {
   $('#rednote-query').addEventListener('input', updateRedNoteSourceQuery);
   $('#regenerate-query-button').addEventListener('click', resetRedNoteSourceQuery);
   $('#rednote-search-button').addEventListener('click', (event) => void searchRedNote(event.currentTarget));
+  $('#download-rednote-url-button').addEventListener('click', (event) => void downloadRedNoteUrl(event.currentTarget));
   $('#rednote-results').addEventListener('click', (event) => {
     const button = event.target.closest('[data-rednote-result-id]');
     if (button) chooseRedNoteResult(button.dataset.rednoteResultId);
+  });
+  $('#same-product-discovery').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-discovery-source]');
+    if (button) openSameProductDiscovery(button.dataset.discoverySource);
   });
   $('#download-rednote-button').addEventListener('click', (event) => void downloadRedNote(event.currentTarget));
   $('#media-assets').addEventListener('change', (event) => {
@@ -1245,6 +1497,8 @@ function bindEvents() {
     if (input) toggleMediaAsset(input.dataset.assetId, input.checked);
   });
   $('#save-media-selection-button').addEventListener('click', (event) => void saveMediaSelection(event.currentTarget));
+  $('#skip-media-button').addEventListener('click', (event) => void skipMedia(event.currentTarget));
+  $('#skip-media-selection-button').addEventListener('click', (event) => void skipMedia(event.currentTarget));
   $('#publish-confirmation').addEventListener('change', (event) => {
     $('#studio-publish-button').disabled = !event.target.checked;
   });
